@@ -50,7 +50,7 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
 
   return (
     <div className="modal-overlay fixed inset-0 flex items-center justify-center z-50 p-4">
-      <div className="modal-content max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="modal-content max-w-2xl w-full max-h-[90vh] overflow-y-auto" style={{ background: '#1a1a3a', opacity: 1 }}>
         <button
           onClick={onClose}
           className="close-btn absolute top-4 right-4 text-white rounded-full w-8 h-8 flex items-center justify-center"
@@ -58,7 +58,7 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
           ✕
         </button>
 
-        <div className="modal-header p-8 text-center">
+        <div className="modal-header p-8 text-center" style={{ background: '#0f0f2a', borderBottom: '3px solid #00a8cc' }}>
           <img
             src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${pokemon.id}.png`}
             alt={pokemon.name}
@@ -67,7 +67,7 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
           <h2 className="text-4xl font-bold text-white capitalize mb-2">
             {pokemon.name}
           </h2>
-          <p className="text-slate-400 text-lg mb-4">
+          <p className="text-cyan-300 text-lg mb-4 font-semibold">
             #{String(pokemon.id).padStart(3, '0')}
           </p>
 
@@ -75,7 +75,7 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
             {pokemon.types.map((t) => (
               <span
                 key={t.type.name}
-                className={`type-badge ${typeColors[t.type.name] || 'bg-gray-500'} text-white px-3 py-1 rounded-full capitalize`}
+                className={`type-badge ${typeColors[t.type.name] || 'bg-gray-500'} text-white px-3 py-1 rounded-full capitalize font-bold`}
               >
                 {t.type.name}
               </span>
@@ -84,20 +84,20 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
 
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="info-card p-4">
-              <p className="text-slate-300 text-sm mb-1">Experiencia Base</p>
-              <p className="text-cyan-300 text-lg font-semibold">
+              <p className="text-cyan-200 text-sm mb-1 font-semibold">Experiencia Base</p>
+              <p className="text-yellow-300 text-lg font-bold">
                 {pokemon.base_experience}
               </p>
             </div>
             <div className="info-card p-4">
-              <p className="text-slate-300 text-sm mb-1">Altura</p>
-              <p className="text-cyan-300 text-lg font-semibold">
+              <p className="text-cyan-200 text-sm mb-1 font-semibold">Altura</p>
+              <p className="text-yellow-300 text-lg font-bold">
                 {(pokemon.height / 10).toFixed(2)} m
               </p>
             </div>
             <div className="info-card p-4">
-              <p className="text-slate-300 text-sm mb-1">Peso</p>
-              <p className="text-cyan-300 text-lg font-semibold">
+              <p className="text-cyan-200 text-sm mb-1 font-semibold">Peso</p>
+              <p className="text-yellow-300 text-lg font-bold">
                 {(pokemon.weight / 10).toFixed(2)} kg
               </p>
             </div>
@@ -126,10 +126,10 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
               {pokemon.stats.map((stat) => (
                 <div key={stat.stat.name}>
                   <div className="flex justify-between mb-1">
-                    <span className="text-cyan-300 capitalize text-sm font-semibold">
+                    <span className="text-cyan-200 capitalize text-sm font-bold">
                       {stat.stat.name}
                     </span>
-                    <span className="text-cyan-400 font-bold">
+                    <span className="text-yellow-300 font-bold">
                       {stat.base_stat}
                     </span>
                   </div>
@@ -152,7 +152,7 @@ function PokemonDetailModal({ pokemon, evolutionItems, onClose }: { pokemon: Pok
             </h3>
             <div className="grid grid-cols-2 gap-2">
               {moves.map((move, i) => (
-                <div key={i} className="bg-slate-700 px-3 py-2 rounded text-slate-300 text-sm capitalize">
+                <div key={i} className="bg-purple-900 border border-purple-500 px-3 py-2 rounded text-purple-100 text-sm capitalize font-semibold hover:bg-purple-800 transition">
                   {move}
                 </div>
               ))}
@@ -247,18 +247,18 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen py-8 px-4">
+    <div className="min-h-screen py-8 px-4" style={{ background: 'linear-gradient(135deg, #000000 0%, #0a0a15 50%, #000000 100%)' }}>
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-6xl font-black mb-2 text-center">
+        <h1 className="text-6xl font-black mb-2 text-center text-white drop-shadow-lg" style={{ textShadow: '0 0 20px rgba(0, 168, 204, 0.8)' }}>
           POKÉDEX
         </h1>
-        <p className="text-center text-cyan-300 mb-8 font-semibold tracking-wider">
+        <p className="text-center text-yellow-300 mb-8 font-bold tracking-wider">
           ⚡ PRIMEROS 151 POKÉMON - CLICK PARA DETALLES ⚡
         </p>
 
         {loading ? (
           <div className="flex justify-center items-center h-64">
-            <p className="text-cyan-300 text-lg font-semibold">▮▯ CARGANDO POKÉMON ▯▮</p>
+            <p className="text-yellow-300 text-lg font-bold">▮▯ CARGANDO POKÉMON ▯▮</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
@@ -273,10 +273,10 @@ function App() {
                   alt={p.name}
                   className="w-32 h-32 mx-auto mb-3 object-contain"
                 />
-                <p className="text-cyan-300 font-bold capitalize text-lg">
+                <p className="text-yellow-300 font-bold capitalize text-lg">
                   {p.name}
                 </p>
-                <p className="text-purple-400 text-sm font-semibold">
+                <p className="text-pink-400 text-sm font-semibold">
                   #{String(p.id).padStart(3, '0')}
                 </p>
               </div>
@@ -287,7 +287,7 @@ function App() {
 
       {detailLoading && (
         <div className="modal-overlay fixed inset-0 flex items-center justify-center z-50">
-          <p className="text-cyan-300 text-lg font-semibold">▮▯ CARGANDO DETALLES ▯▮</p>
+          <p className="text-yellow-300 text-lg font-bold">▮▯ CARGANDO DETALLES ▯▮</p>
         </div>
       )}
 
