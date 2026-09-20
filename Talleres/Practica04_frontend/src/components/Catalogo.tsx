@@ -1,24 +1,52 @@
 import { useCart } from '../context/CartContext';
+import { useEffect, useState } from 'react';
+import { getProductosAPI } from '../services/api';
+
+interface Producto {
+    id: number;
+    nombre: string;
+    precio: number;
+    img: string;
+}
+
 const Catalogo = () => {
-    const { addToCart } = useCart(); // <-- Usamos la función del contexto
-    const productos = [
-        {
-            id: 1, nombre: "Serum Revitalizante", precio: 45.00, img:
-                "https://picsum.photos/seed/serum/150"
-        },
-        {
-            id: 2, nombre: "Crema Hidratante Pro", precio: 32.50, img:
-                "https://picsum.photos/seed/crema/150"
-        },
-        {
-            id: 3, nombre: "Tónico Purificante", precio: 28.00, img:
-                "https://picsum.photos/seed/tonico/150"
-        },
-        {
-            id: 4, nombre: "Mascarilla Nocturna", precio: 50.00, img:
-                "https://picsum.photos/seed/mascarilla/150"
-        },
-    ];
+    const { addToCart } = useCart();
+    const [productos, setProductos] = useState<Producto[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchProductos = async () => {
+            try {
+                setIsLoading(true);
+                setError(null);
+                const data = await getProductosAPI();
+                setProductos(data);
+            } catch (err) {
+                setError(err instanceof Error ? err.message : 'Error al cargar productos');
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchProductos();
+    }, []);
+    if (isLoading) {
+        return (
+            <div className="flex justify-center items-center min-h-96">
+                <p className="text-slate-600">Cargando productos...</p>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="bg-red-50 text-red-600 p-4 rounded-lg border border-red-200">
+                Error: {error}
+            </div>
+        );
+    }
+
     return (
         <div>
             <h1 className="text-2xl font-bold text-slate-800 mb-6">Catálogo de

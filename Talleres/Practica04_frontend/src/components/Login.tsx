@@ -8,17 +8,17 @@ const Login = () => {
     const [error, setError] = useState<string>('');
 
     const navigate = useNavigate();
-    const { login } = useAuth();
-    const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
+    const { login, isLoading } = useAuth();
 
-        // Simulación de validación hardcodeada (A futuro se reemplazará por llamada a API)
-        if (email === 'admin@upse.edu.ec' && password === '123456') {
-            setError('');
-            login(email); // Cambiamos el estado global a autenticado
-            navigate('/'); // Redirigimos al Dashboard
-        } else {
-            setError('Credenciales incorrectas. Usa admin@upse.edu.ec / 123456');
+    const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        setError('');
+
+        try {
+            await login(email, password);
+            navigate('/');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Error al iniciar sesión');
         }
     };
     return (
@@ -66,10 +66,11 @@ transition"
                     </div>
                     <button
                         type="submit"
+                        disabled={isLoading}
                         className="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg
-hover:bg-indigo-700 transition"
+hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Iniciar Sesión
+                        {isLoading ? 'Iniciando...' : 'Iniciar Sesión'}
                     </button>
                 </form>
             </div>
