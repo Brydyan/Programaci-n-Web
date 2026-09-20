@@ -14,20 +14,20 @@ const Navbar = () => {
         navigate("/login");
     };
     return (
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8">
-            <div className="flex items-center gap-4">
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8 gap-4">
+            <div className="flex items-center gap-2 md:gap-4 min-w-0">
                 <button
                     onClick={toggleCollapsed}
-                    className="p-2 hover:bg-slate-100 rounded-lg transition"
+                    className="p-2 hover:bg-slate-100 rounded-lg transition flex-shrink-0"
                     title="Toggle Sidebar"
                 >
-                    <GiHamburgerMenu className="text-2xl text-slate-600" />
+                    <GiHamburgerMenu className="text-xl md:text-2xl text-slate-600" />
                 </button>
-                <h2 className="text-slate-600 font-medium text-lg">
+                <h2 className="text-slate-600 font-medium text-sm md:text-lg truncate">
                     Panel de Administración
                 </h2>
             </div>
-            <div className="flex items-end gap-6">
+            <div className="flex items-end gap-3 md:gap-6 flex-shrink-0">
                 <Link
                     to="/carrito"
                     className="relative p-2 hover:bg-slate-100 rounded-full transition"
@@ -41,8 +41,8 @@ transform translate-x-1 -translate-y-1">
                         </span>
                     )}
                 </Link>
-                <div className="flex items-center gap-4">
-                    <span className="text-sm text-slate-500">{userEmail}</span>
+                <div className="flex items-center gap-2 md:gap-4">
+                    <span className="text-xs md:text-sm text-slate-500 hidden sm:inline truncate">{userEmail}</span>
                     {/* Contenedor relativo con la clase 'group' para detectar el hover */}
                     <div className="relative group cursor-pointer pb-2">
                         {/* Círculo del usuario / Avatar */}

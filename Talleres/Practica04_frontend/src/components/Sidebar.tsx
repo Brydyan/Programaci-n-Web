@@ -9,41 +9,41 @@ const Sidebar = () => {
 
     return (
         <aside
-            className={`bg-slate-500 text-white flex flex-col transition-all duration-300 ${
+            className={`bg-slate-500 text-white flex flex-col transition-all duration-300 h-screen ${
                 isCollapsed ? "w-20" : "w-64"
             }`}
         >
             <div
-                className={`p-6 text-2xl font-bold border-b border-slate-700 flex items-center justify-center ${
+                className={`p-4 md:p-6 text-lg md:text-2xl font-bold border-b border-slate-700 flex items-center justify-center transition-all ${
                     isCollapsed ? "text-lg" : ""
                 }`}
             >
                 {isCollapsed ? "MC" : "MultiCatálogo"}
             </div>
-            <nav className="flex-1 p-4 space-y-2">
+            <nav className="flex-1 p-2 md:p-4 space-y-1 md:space-y-2">
                 <Link
                     to="/"
-                    className="flex items-center gap-3 p-3 rounded hover:bg-slate-800 transition"
+                    className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
                     title={isCollapsed ? "Dashboard" : ""}
                 >
-                    <MdOutlineDashboard className="text-xl flex-shrink-0" />
-                    {!isCollapsed && <span>Dashboard</span>}
+                    <MdOutlineDashboard className="text-lg md:text-xl flex-shrink-0" />
+                    {!isCollapsed && <span className="whitespace-nowrap">Dashboard</span>}
                 </Link>
                 <Link
                     to="/catalogo"
-                    className="flex items-center gap-3 p-3 rounded hover:bg-slate-800 transition"
+                    className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
                     title={isCollapsed ? "Catálogo" : ""}
                 >
-                    <GrCatalog className="text-xl flex-shrink-0" />
-                    {!isCollapsed && <span>Catálogo</span>}
+                    <GrCatalog className="text-lg md:text-xl flex-shrink-0" />
+                    {!isCollapsed && <span className="whitespace-nowrap">Catálogo</span>}
                 </Link>
                 <Link
                     to="/mi-red"
-                    className="flex items-center gap-3 p-3 rounded hover:bg-slate-800 transition"
+                    className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
                     title={isCollapsed ? "Mi Red" : ""}
                 >
-                    <FaNetworkWired className="text-xl flex-shrink-0" />
-                    {!isCollapsed && <span>Mi Red</span>}
+                    <FaNetworkWired className="text-lg md:text-xl flex-shrink-0" />
+                    {!isCollapsed && <span className="whitespace-nowrap">Mi Red</span>}
                 </Link>
             </nav>
         </aside>
