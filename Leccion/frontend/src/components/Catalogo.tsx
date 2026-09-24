@@ -1,135 +1,157 @@
 import { useCart } from '../context/CartContext';
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { productosMock, categorias } from '../data/productos';
+import { useState, useMemo, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { categorias, type Producto } from '../data/productos';
+import { getProductos } from '../services/productosService';
 
 export default function Catalogo() {
-  const navigate = useNavigate();
   const { addToCart } = useCart();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [busqueda, setBusqueda] = useState<string>("");
+  const [categoria, setCategoria] = useState<string>(searchParams.get("categoria") ?? "Todas");
+  const [productos, setProductos] = useState<Producto[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // useMemo: filtra productos solo cuando searchTerm o selectedCategory cambian
-  const filteredProductos = useMemo(() => {
-    return productosMock.filter((producto) => {
-      const matchSearch =
-        producto.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        producto.descripcion.toLowerCase().includes(searchTerm.toLowerCase());
+  // Cargar productos al montar
+  useEffect(() => {
+    const fetchProductos = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        const data = await getProductos();
+        setProductos(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error al cargar productos');
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-      const matchCategory = selectedCategory === null || producto.categoria === selectedCategory;
+    fetchProductos();
+  }, []);
 
-      return matchSearch && matchCategory;
+  // Filtrado con useMemo: solo se recalcula cuando cambian busqueda/categoria/productos
+  const productosFiltrados = useMemo(() => {
+    const texto = busqueda.trim().toLowerCase();
+    return productos.filter((prod) => {
+      const coincideCategoria = categoria === "Todas" || prod.categoria === categoria;
+      const coincideTexto =
+        texto === "" ||
+        prod.nombre.toLowerCase().includes(texto) ||
+        prod.descripcion.toLowerCase().includes(texto);
+      return coincideCategoria && coincideTexto;
     });
-  }, [searchTerm, selectedCategory]);
+  }, [productos, busqueda, categoria]);
+
+  const handleCategoriaChange = (value: string) => {
+    setCategoria(value);
+    // Sincronizamos el query string para que la URL sea compartible
+    if (value === "Todas") {
+      setSearchParams({});
+    } else {
+      setSearchParams({ categoria: value });
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-600 text-lg">Cargando productos...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-6">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-md text-center">
+          <p className="text-red-700 font-semibold mb-4">Error al cargar productos</p>
+          <p className="text-red-600 text-sm mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+          >
+            Reintentar
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-6 py-12">
-        {/* Encabezado */}
-        <div className="mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Catálogo de Productos</h1>
-          <p className="text-gray-600">
-            {filteredProductos.length} productos encontrados
-          </p>
-        </div>
+        <h1 className="text-2xl font-bold text-slate-800 mb-2">Catálogo de Productos</h1>
+        <p className="text-slate-500 mb-6">
+          {productosFiltrados.length} producto(s) encontrado(s)
+        </p>
 
-        {/* Filtros */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-12">
-          {/* Búsqueda */}
-          <div className="lg:col-span-2">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Buscar
-            </label>
-            <input
-              type="text"
-              placeholder="Serum, Crema, Mascarilla..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-            />
-          </div>
-
-          {/* Categorías */}
-          <div className="lg:col-span-2">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Categoría
-            </label>
-            <select
-              value={selectedCategory || ''}
-              onChange={(e) => setSelectedCategory(e.target.value || null)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-200"
-            >
-              <option value="">Todas las categorías</option>
-              {categorias.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-          </div>
+        {/* ===== BARRA DE BÚSQUEDA Y FILTROS ===== */}
+        <div className="flex flex-col md:flex-row gap-4 mb-8">
+          <input
+            type="text"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre o descripción..."
+            className="flex-1 px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+          />
+          <select
+            value={categoria}
+            onChange={(e) => handleCategoriaChange(e.target.value)}
+            className="px-4 py-3 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+          >
+            <option value="Todas">Todas las categorías</option>
+            {categorias.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Grid de productos */}
-        {filteredProductos.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {filteredProductos.map((producto) => (
-              <div
-                key={producto.id}
-                className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-lg transition group"
+        {productosFiltrados.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {productosFiltrados.map((prod) => (
+              <Link
+                key={prod.id}
+                to={`/producto/${prod.id}`}
+                className="bg-white rounded-xl overflow-hidden border border-slate-200 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all group"
               >
-                {/* Imagen */}
-                <div
-                  className="h-48 bg-gray-100 overflow-hidden cursor-pointer group-hover:scale-105 transition"
-                  onClick={() => navigate(`/producto/${producto.id}`)}
-                >
-                  <img
-                    src={producto.img}
-                    alt={producto.nombre}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                {/* Contenido */}
-                <div className="p-4 flex flex-col">
-                  <p className="text-sm text-rose-500 font-semibold uppercase mb-1">
-                    {producto.categoria}
+                <img
+                  src={prod.img}
+                  alt={prod.nombre}
+                  className="w-full h-48 object-cover group-hover:scale-105 transition-transform"
+                />
+                <div className="p-4">
+                  <p className="text-xs uppercase tracking-wide text-indigo-500 font-semibold">
+                    {prod.categoria}
                   </p>
-                  <h3
-                    className="text-lg font-bold text-gray-900 mb-2 cursor-pointer hover:text-rose-500 transition line-clamp-2"
-                    onClick={() => navigate(`/producto/${producto.id}`)}
+                  <h3 className="font-semibold text-slate-800 mt-1">{prod.nombre}</h3>
+                  <p className="text-indigo-600 font-bold mt-2">${prod.precio.toFixed(2)}</p>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      addToCart(prod);
+                    }}
+                    className="mt-3 w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-semibold"
                   >
-                    {producto.nombre}
-                  </h3>
-                  <p className="text-gray-600 text-sm line-clamp-2 mb-4 flex-grow">
-                    {producto.descripcion}
-                  </p>
-
-                  <div className="flex justify-between items-center">
-                    <span className="text-2xl font-bold text-gray-900">
-                      ${producto.precio.toFixed(2)}
-                    </span>
-                    <button
-                      onClick={() => addToCart(producto)}
-                      className="px-4 py-2 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition text-sm font-semibold"
-                    >
-                      + Carrito
-                    </button>
-                  </div>
+                    Añadir al Carrito
+                  </button>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         ) : (
           <div className="text-center py-12">
-            <p className="text-gray-600 text-lg mb-4">
-              No encontramos productos que coincidan con tu búsqueda.
-            </p>
+            <p className="text-slate-500 mb-4">No encontramos productos que coincidan con tu búsqueda.</p>
             <button
               onClick={() => {
-                setSearchTerm('');
-                setSelectedCategory(null);
+                setBusqueda('');
+                handleCategoriaChange('Todas');
               }}
-              className="px-6 py-2 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition font-semibold"
+              className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold"
             >
               Limpiar filtros
             </button>

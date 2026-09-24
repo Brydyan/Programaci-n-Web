@@ -1,18 +1,13 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { loginAPI } from '../services/api';
+import { initializeAuth } from './authHelpers';
+import type { Usuario, AuthContextType } from './authTypes';
 
-interface AuthContextType {
-    isAuthenticated: boolean;
-    userEmail: string | null;
-    userRole: "admin" | "cliente" | null;
-    login: (email: string, password: string) => Promise<void>;
-    logout: () => void;
-    isLoading: boolean;
-    error: string | null;
-}
+export type { Usuario, AuthContextType };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
     const context = useContext(AuthContext);
     if (!context) {
@@ -26,24 +21,9 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
-    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-    const [userEmail, setUserEmail] = useState<string | null>(null);
-    const [userRole, setUserRole] = useState<"admin" | "cliente" | null>(null);
+    const [authState, setAuthState] = useState(() => initializeAuth());
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
-    // Restaurar sesión desde localStorage al montar
-    useEffect(() => {
-        const token = localStorage.getItem("token");
-        const email = localStorage.getItem("userEmail");
-        const role = localStorage.getItem("userRole");
-
-        if (token && email && role) {
-            setIsAuthenticated(true);
-            setUserEmail(email);
-            setUserRole(role as "admin" | "cliente");
-        }
-    }, []);
 
     const login = async (email: string, password: string) => {
         setIsLoading(true);
@@ -53,9 +33,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             localStorage.setItem("token", data.token);
             localStorage.setItem("userEmail", data.email);
             localStorage.setItem("userRole", data.rol);
-            setIsAuthenticated(true);
-            setUserEmail(data.email);
-            setUserRole(data.rol);
+            setAuthState({ isAuthenticated: true, user: { email: data.email, rol: data.rol } });
         } catch (err) {
             setError(err instanceof Error ? err.message : "Error al iniciar sesión");
             throw err;
@@ -68,14 +46,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         localStorage.removeItem("token");
         localStorage.removeItem("userEmail");
         localStorage.removeItem("userRole");
-        setIsAuthenticated(false);
-        setUserEmail(null);
-        setUserRole(null);
+        setAuthState({ isAuthenticated: false, user: null });
         setError(null);
     };
 
     return (
-        <AuthContext.Provider value={{ isAuthenticated, userEmail, userRole, login, logout, isLoading, error }}>
+        <AuthContext.Provider value={{ isAuthenticated: authState.isAuthenticated, user: authState.user, login, logout, isLoading, error }}>
             {children}
         </AuthContext.Provider>
     );

@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
-import { productosMock } from '../data/productos';
+import { useState, useEffect } from 'react';
+import { type Producto } from '../data/productos';
+import { getProductoById } from '../services/productosService';
 import { useCart } from '../context/CartContext';
 
 export default function DetalleProducto() {
@@ -10,14 +11,46 @@ export default function DetalleProducto() {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [producto, setProducto] = useState<Producto | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const producto = productosMock.find((p) => p.id === Number(id));
+  // Cargar producto al montar
+  useEffect(() => {
+    const fetchProducto = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        const data = await getProductoById(Number(id));
+        setProducto(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error al cargar producto');
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  if (!producto) {
+    if (id) {
+      fetchProducto();
+    }
+  }, [id]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-600 text-lg">Cargando producto...</p>
+      </div>
+    );
+  }
+
+  if (error || !producto) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-900 mb-4">Producto no encontrado</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-4">
+            {error ? 'Error al cargar' : 'Producto no encontrado'}
+          </h1>
+          {error && <p className="text-red-600 mb-4">{error}</p>}
           <button
             onClick={() => navigate('/catalogo')}
             className="px-6 py-2 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition"

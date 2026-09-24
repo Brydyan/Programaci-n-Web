@@ -8,9 +8,9 @@ import { useAuth } from "../context/AuthContext";
 
 export default function Sidebar() {
   const { isCollapsed } = useSidebar();
-  const { userRole } = useAuth();
+  const { user } = useAuth();
 
-  const isAdmin = userRole === 'admin';
+  const isAdmin = user?.rol === 'admin';
 
   return (
     <aside

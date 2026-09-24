@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { userEmail, userRole } = useAuth();
+  const { user } = useAuth();
   const { totalItems, totalPrice } = useCart();
 
   // Cálculos red MLM (funciones puras)
@@ -24,10 +24,10 @@ export default function Dashboard() {
         {/* Bienvenida */}
         <div className="mb-12">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            Hola, {userEmail?.split('@')[0]}
+            Hola, {user?.email?.split('@')[0]}
           </h1>
           <p className="text-gray-600">
-            Rol: <span className="font-semibold text-rose-500">{userRole === 'admin' ? 'Administrador' : 'Cliente'}</span>
+            Rol: <span className="font-semibold text-rose-500">{user?.rol === 'admin' ? 'Administrador' : 'Cliente'}</span>
           </p>
         </div>
 
@@ -165,7 +165,7 @@ export default function Dashboard() {
             </div>
 
             {/* Admin only */}
-            {userRole === 'admin' && (
+            {user?.rol === 'admin' && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
                 <h4 className="font-bold text-amber-900 mb-3">🔐 Panel Admin</h4>
                 <p className="text-sm text-amber-800 mb-4">

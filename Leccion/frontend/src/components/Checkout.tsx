@@ -1,376 +1,206 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, type FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
-import { useAuth } from '../context/AuthContext';
 
-type CheckoutStep = 'resumen' | 'pago' | 'confirmacion';
+interface DatosEnvio {
+  nombre: string;
+  email: string;
+  direccion: string;
+  ciudad: string;
+  telefono: string;
+  metodoPago: string;
+}
 
-export default function Checkout() {
-  const navigate = useNavigate();
+const METODOS_PAGO = ["Tarjeta de crédito", "Transferencia bancaria", "Efectivo contra entrega"];
+
+const Checkout = () => {
   const { cart, totalPrice, clearCart } = useCart();
-  const { userEmail } = useAuth();
-  const [step, setStep] = useState<CheckoutStep>('resumen');
-  const [formData, setFormData] = useState({
-    nombre: '',
-    apellido: '',
-    email: userEmail || '',
-    telefono: '',
-    direccion: '',
-    ciudad: '',
-    codigoPostal: '',
-    numeroTarjeta: '',
-    mes: '',
-    anio: '',
-    cvv: '',
-  });
-  const [orderNumber] = useState(`ORD-${Date.now()}`);
+  const navigate = useNavigate();
 
-  // Volver atrás
-  if (cart.length === 0 && step === 'resumen') {
+  const [datos, setDatos] = useState<DatosEnvio>({
+    nombre: "",
+    email: "",
+    direccion: "",
+    ciudad: "",
+    telefono: "",
+    metodoPago: METODOS_PAGO[0],
+  });
+  const [procesando, setProcesando] = useState<boolean>(false);
+
+  // Si el carrito está vacío, mostramos un aviso en lugar del formulario
+  if (cart.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50 py-12 px-6">
-        <div className="max-w-md mx-auto bg-white p-8 rounded-xl border border-gray-200 text-center">
-          <p className="text-gray-600 mb-6">Tu carrito está vacío</p>
-          <button
-            onClick={() => navigate('/catalogo')}
-            className="px-6 py-2 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition"
-          >
-            Volver a catalogo
-          </button>
-        </div>
+      <div className="bg-white p-10 rounded-lg border border-slate-200 text-center">
+        <p className="text-slate-600 text-lg mb-4">No tienes productos en el carrito.</p>
+        <Link to="/catalogo" className="text-indigo-600 font-semibold hover:underline">
+          ← Ir al catálogo
+        </Link>
       </div>
     );
   }
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+  const handleChange = (campo: keyof DatosEnvio, valor: string) => {
+    setDatos((prev) => ({ ...prev, [campo]: valor }));
   };
 
-  const handleNextStep = () => {
-    if (step === 'resumen') {
-      setStep('pago');
-    } else if (step === 'pago') {
-      setStep('confirmacion');
-    }
-  };
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setProcesando(true);
 
-  const handlePrevStep = () => {
-    if (step === 'pago') {
-      setStep('resumen');
-    } else if (step === 'confirmacion') {
-      setStep('pago');
-    }
-  };
+    // Simulamos el procesamiento del pago con un pequeño retraso
+    setTimeout(() => {
+      const pedido = {
+        numero: `MC-${Date.now().toString().slice(-6)}`,
+        items: cart.map((item) => ({
+          nombre: item.nombre,
+          cantidad: item.cantidad,
+          precio: item.precio,
+        })),
+        total: totalPrice,
+        cliente: { nombre: datos.nombre, email: datos.email, ciudad: datos.ciudad },
+        fecha: new Date().toLocaleString("es-EC"),
+      };
 
-  const handleFinish = () => {
-    // Limpiar carrito
-    clearCart();
-    navigate('/');
+      // Vaciamos el carrito y pasamos los datos del pedido a la confirmación
+      clearCart();
+      navigate("/confirmacion", { state: { pedido } });
+    }, 1200);
   };
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-6">
-      <div className="max-w-4xl mx-auto">
-        {/* Progreso */}
-        <div className="mb-12">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-8">
-              <div
-                className={`text-center ${
-                  ['resumen', 'pago', 'confirmacion'].indexOf(step) >= 0
-                    ? 'text-rose-500'
-                    : 'text-gray-400'
-                }`}
-              >
-                <div className="w-10 h-10 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold mx-auto mb-2">
-                  1
-                </div>
-                <p className="text-sm font-semibold">Resumen</p>
-              </div>
-
-              <div
-                className={`w-12 h-1 ${
-                  ['pago', 'confirmacion'].indexOf(step) >= 0 ? 'bg-rose-500' : 'bg-gray-300'
-                }`}
-              ></div>
-
-              <div
-                className={`text-center ${
-                  ['pago', 'confirmacion'].indexOf(step) >= 0
-                    ? 'text-rose-500'
-                    : 'text-gray-400'
-                }`}
-              >
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mx-auto mb-2 ${
-                    ['pago', 'confirmacion'].indexOf(step) >= 0
-                      ? 'bg-rose-500 text-white'
-                      : 'bg-gray-300 text-gray-600'
-                  }`}
-                >
-                  2
-                </div>
-                <p className="text-sm font-semibold">Pago</p>
-              </div>
-
-              <div
-                className={`w-12 h-1 ${
-                  step === 'confirmacion' ? 'bg-rose-500' : 'bg-gray-300'
-                }`}
-              ></div>
-
-              <div
-                className={`text-center ${
-                  step === 'confirmacion' ? 'text-rose-500' : 'text-gray-400'
-                }`}
-              >
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold mx-auto mb-2 ${
-                    step === 'confirmacion'
-                      ? 'bg-rose-500 text-white'
-                      : 'bg-gray-300 text-gray-600'
-                  }`}
-                >
-                  3
-                </div>
-                <p className="text-sm font-semibold">Confirmación</p>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-3xl font-bold text-slate-800 mb-8">Finalizar Compra</h1>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Contenido principal */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-8">
-            {step === 'resumen' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Resumen del Pedido</h2>
-                <div className="space-y-4 mb-8">
-                  {cart.map((item) => (
-                    <div key={item.id} className="flex justify-between items-center pb-4 border-b border-gray-200">
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{item.nombre}</h3>
-                        <p className="text-sm text-gray-600">Cantidad: {item.cantidad}</p>
-                      </div>
-                      <span className="font-bold text-gray-900">
-                        ${(item.precio * item.cantidad).toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+          {/* ===== FORMULARIO DE ENVÍO Y PAGO ===== */}
+          <form onSubmit={handleSubmit} className="lg:col-span-2 space-y-6">
+            {/* Datos de Envío */}
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+              <h2 className="text-lg font-bold text-slate-800 mb-4">Datos de Envío</h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Nombre completo *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={datos.nombre}
+                    onChange={(e) => handleChange("nombre", e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 outline-none transition"
+                  />
                 </div>
-                <button
-                  onClick={handleNextStep}
-                  className="w-full px-6 py-3 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition font-bold"
-                >
-                  Continuar a Pago
-                </button>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Correo electrónico *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={datos.email}
+                    onChange={(e) => handleChange("email", e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 outline-none transition"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Dirección *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={datos.direccion}
+                    onChange={(e) => handleChange("direccion", e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 outline-none transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Ciudad *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={datos.ciudad}
+                    onChange={(e) => handleChange("ciudad", e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 outline-none transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Teléfono *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={datos.telefono}
+                    onChange={(e) => handleChange("telefono", e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 outline-none transition"
+                  />
+                </div>
               </div>
-            )}
+            </div>
 
-            {step === 'pago' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Información de Pago</h2>
-
-                {/* Datos personales */}
-                <div className="mb-8">
-                  <h3 className="font-bold text-gray-900 mb-4">Datos Personales</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <input
-                      type="text"
-                      name="nombre"
-                      placeholder="Nombre"
-                      value={formData.nombre}
-                      onChange={handleInputChange}
-                      className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                    />
-                    <input
-                      type="text"
-                      name="apellido"
-                      placeholder="Apellido"
-                      value={formData.apellido}
-                      onChange={handleInputChange}
-                      className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                    />
-                    <input
-                      type="email"
-                      name="email"
-                      placeholder="Email"
-                      value={formData.email}
-                      onChange={handleInputChange}
-                      className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                    />
-                    <input
-                      type="tel"
-                      name="telefono"
-                      placeholder="Teléfono"
-                      value={formData.telefono}
-                      onChange={handleInputChange}
-                      className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Dirección */}
-                <div className="mb-8">
-                  <h3 className="font-bold text-gray-900 mb-4">Dirección de Entrega</h3>
-                  <div className="grid grid-cols-1 gap-4">
-                    <input
-                      type="text"
-                      name="direccion"
-                      placeholder="Dirección completa"
-                      value={formData.direccion}
-                      onChange={handleInputChange}
-                      className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <input
-                        type="text"
-                        name="ciudad"
-                        placeholder="Ciudad"
-                        value={formData.ciudad}
-                        onChange={handleInputChange}
-                        className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                      />
-                      <input
-                        type="text"
-                        name="codigoPostal"
-                        placeholder="Código Postal"
-                        value={formData.codigoPostal}
-                        onChange={handleInputChange}
-                        className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tarjeta */}
-                <div className="mb-8">
-                  <h3 className="font-bold text-gray-900 mb-4">Información de Tarjeta</h3>
-                  <div className="space-y-4">
-                    <input
-                      type="text"
-                      name="numeroTarjeta"
-                      placeholder="Número de tarjeta (16 dígitos)"
-                      value={formData.numeroTarjeta}
-                      onChange={handleInputChange}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                    />
-                    <div className="grid grid-cols-3 gap-4">
-                      <input
-                        type="text"
-                        name="mes"
-                        placeholder="MM"
-                        value={formData.mes}
-                        onChange={handleInputChange}
-                        className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                      />
-                      <input
-                        type="text"
-                        name="anio"
-                        placeholder="AA"
-                        value={formData.anio}
-                        onChange={handleInputChange}
-                        className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                      />
-                      <input
-                        type="text"
-                        name="cvv"
-                        placeholder="CVV"
-                        value={formData.cvv}
-                        onChange={handleInputChange}
-                        className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-rose-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-4">
-                  <button
-                    onClick={handlePrevStep}
-                    className="flex-1 px-6 py-3 border-2 border-gray-300 text-gray-900 rounded-lg hover:bg-gray-50 transition font-bold"
+            {/* Método de Pago */}
+            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
+              <h2 className="text-lg font-bold text-slate-800 mb-4">Método de Pago</h2>
+              <div className="space-y-3">
+                {METODOS_PAGO.map((metodo) => (
+                  <label
+                    key={metodo}
+                    className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 cursor-pointer hover:border-indigo-300 transition"
                   >
-                    Atrás
-                  </button>
-                  <button
-                    onClick={handleNextStep}
-                    className="flex-1 px-6 py-3 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition font-bold"
-                  >
-                    Confirmar Pago
-                  </button>
-                </div>
+                    <input
+                      type="radio"
+                      name="metodoPago"
+                      value={metodo}
+                      checked={datos.metodoPago === metodo}
+                      onChange={(e) => handleChange("metodoPago", e.target.value)}
+                      className="accent-indigo-600"
+                    />
+                    <span className="text-sm text-slate-700">{metodo}</span>
+                  </label>
+                ))}
               </div>
-            )}
+            </div>
 
-            {step === 'confirmacion' && (
-              <div className="text-center">
-                <div className="text-6xl mb-6">✅</div>
-                <h2 className="text-3xl font-bold text-gray-900 mb-4">¡Pedido Confirmado!</h2>
-                <p className="text-gray-600 mb-2">Tu pedido ha sido procesado exitosamente.</p>
-                <p className="text-2xl font-bold text-rose-500 mb-8">Número de orden: {orderNumber}</p>
+            <button
+              type="submit"
+              disabled={procesando}
+              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {procesando ? "Procesando pago..." : "Confirmar Pedido"}
+            </button>
+          </form>
 
-                <div className="bg-gray-50 p-6 rounded-lg mb-8 text-left">
-                  <h3 className="font-bold text-gray-900 mb-4">Resumen de tu compra:</h3>
-                  <div className="space-y-2 text-sm text-gray-700">
-                    <p>
-                      <strong>Nombre:</strong> {formData.nombre} {formData.apellido}
-                    </p>
-                    <p>
-                      <strong>Email:</strong> {formData.email}
-                    </p>
-                    <p>
-                      <strong>Entrega en:</strong> {formData.direccion}, {formData.ciudad}
-                    </p>
-                    <p>
-                      <strong>Total pagado:</strong> ${totalPrice.toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleFinish}
-                  className="w-full px-6 py-3 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition font-bold"
-                >
-                  Volver al inicio
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Resumen lateral */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 h-fit sticky top-6">
-            <h3 className="text-xl font-bold text-gray-900 mb-6">Total del Pedido</h3>
-            <div className="space-y-4 pb-6 border-b border-gray-200 mb-6">
+          {/* ===== RESUMEN DEL PEDIDO ===== */}
+          <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm h-fit">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">Resumen del Pedido</h2>
+            <div className="space-y-3 border-b border-slate-100 pb-4 mb-4">
               {cart.map((item) => (
                 <div key={item.id} className="flex justify-between text-sm">
-                  <span className="text-gray-600">
-                    {item.nombre} x {item.cantidad}
+                  <span className="text-slate-600">
+                    {item.nombre} × {item.cantidad}
                   </span>
-                  <span className="font-semibold text-gray-900">
+                  <span className="font-semibold text-slate-800">
                     ${(item.precio * item.cantidad).toFixed(2)}
                   </span>
                 </div>
               ))}
             </div>
-            <div className="mb-4 pb-4 border-b border-gray-200">
-              <div className="flex justify-between mb-2">
-                <span className="text-gray-600">Subtotal</span>
-                <span className="font-semibold">${totalPrice.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between mb-2">
-                <span className="text-gray-600">Envío</span>
-                <span className="font-semibold">Gratis</span>
-              </div>
-            </div>
-            <div className="flex justify-between text-lg">
-              <span className="font-bold text-gray-900">Total</span>
-              <span className="font-bold text-rose-500">${totalPrice.toFixed(2)}</span>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-800 font-bold">Total</span>
+              <span className="text-2xl font-bold text-indigo-600">
+                ${totalPrice.toFixed(2)}
+              </span>
             </div>
           </div>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default Checkout;

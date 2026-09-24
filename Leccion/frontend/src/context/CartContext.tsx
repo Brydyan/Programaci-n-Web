@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import type { Producto } from '../data/productos';
+import { initializeCart, getCartKey } from './cartHelpers';
 
 export interface CartItem extends Producto {
     cantidad: number;
@@ -17,6 +18,7 @@ interface CartContextType {
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useCart = () => {
     const context = useContext(CartContext);
     if (!context) {
@@ -29,29 +31,9 @@ interface CartProviderProps {
     children: ReactNode;
 }
 
-// Clave localStorage: cart_[userEmail]
-const getCartKey = (userEmail: string | null) => {
-    return userEmail ? `cart_${userEmail}` : null;
-};
-
 export const CartProvider = ({ children }: CartProviderProps) => {
-    const [cart, setCart] = useState<CartItem[]>([]);
+    const [cart, setCart] = useState<CartItem[]>(() => initializeCart());
     const userEmail = localStorage.getItem("userEmail");
-
-    // Cargar carrito desde localStorage al montar
-    useEffect(() => {
-        const cartKey = getCartKey(userEmail);
-        if (cartKey) {
-            const saved = localStorage.getItem(cartKey);
-            if (saved) {
-                try {
-                    setCart(JSON.parse(saved));
-                } catch {
-                    setCart([]);
-                }
-            }
-        }
-    }, [userEmail]);
 
     // Guardar carrito en localStorage cuando cambia
     useEffect(() => {

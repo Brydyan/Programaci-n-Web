@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { redInicial, contarRed, sumarVentasRed, sumarComisiones } from '../data/red';
 import { productosMock } from '../data/productos';
 
@@ -14,12 +15,14 @@ export default function Reportes() {
     { mes: 'Abril', ventas: 7200, comisiones: 360 },
   ];
 
-  // Mock data: top productos
-  const topProductos = productosMock.slice(0, 5).map((p) => ({
-    ...p,
-    unidadesVendidas: Math.floor(Math.random() * 100) + 10,
-    ingresos: p.precio * (Math.floor(Math.random() * 100) + 10),
-  }));
+  // Mock data: top productos (useState initializer para generar valores aleatorios solo una vez)
+  const [topProductos] = useState(() =>
+    productosMock.slice(0, 5).map((p) => ({
+      ...p,
+      unidadesVendidas: Math.floor(Math.random() * 100) + 10,
+      ingresos: p.precio * (Math.floor(Math.random() * 100) + 10),
+    }))
+  );
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-6">

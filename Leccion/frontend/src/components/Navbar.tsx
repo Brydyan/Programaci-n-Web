@@ -6,7 +6,7 @@ import { GiHamburgerMenu } from "react-icons/gi";
 
 export default function Navbar() {
   const { totalItems } = useCart();
-  const { logout, userEmail, userRole } = useAuth();
+  const { logout, user } = useAuth();
   const { toggleCollapsed } = useSidebar();
   const navigate = useNavigate();
 
@@ -15,7 +15,7 @@ export default function Navbar() {
     navigate("/login");
   };
 
-  const userInitials = userEmail ? userEmail.substring(0, 2).toUpperCase() : "U";
+  const userInitials = user?.email ? user.email.substring(0, 2).toUpperCase() : "U";
 
   return (
     <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-8 gap-4 shadow-sm">
@@ -28,7 +28,7 @@ export default function Navbar() {
           <GiHamburgerMenu className="text-xl md:text-2xl text-gray-600" />
         </button>
         <h2 className="text-gray-700 font-semibold text-sm md:text-lg truncate">
-          MultiCatálogo — {userRole === 'admin' ? 'Panel Admin' : 'Tienda'}
+          MultiCatálogo — {user?.rol === 'admin' ? 'Panel Admin' : 'Tienda'}
         </h2>
       </div>
 
@@ -61,12 +61,12 @@ export default function Navbar() {
             {/* User info visible on md+ */}
             <div className="hidden md:flex flex-col text-right">
               <span className="text-xs md:text-sm text-gray-900 font-semibold truncate max-w-40">
-                {userEmail?.split('@')[0]}
+                {user?.email?.split('@')[0]}
               </span>
               <span className={`text-xs font-bold uppercase ${
-                userRole === 'admin' ? 'text-amber-600' : 'text-blue-600'
+                user?.rol === 'admin' ? 'text-amber-600' : 'text-blue-600'
               }`}>
-                {userRole === 'admin' ? 'Administrador' : 'Cliente'}
+                {user?.rol === 'admin' ? 'Administrador' : 'Cliente'}
               </span>
             </div>
           </div>
@@ -75,9 +75,9 @@ export default function Navbar() {
           <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
             {/* Header */}
             <div className="px-4 py-3 border-b border-gray-100">
-              <p className="text-sm font-semibold text-gray-900">{userEmail}</p>
+              <p className="text-sm font-semibold text-gray-900">{user?.email}</p>
               <p className="text-xs text-gray-600 mt-1">
-                {userRole === 'admin' ? 'Administrador' : 'Cliente'}
+                {user?.rol === 'admin' ? 'Administrador' : 'Cliente'}
               </p>
             </div>
 
@@ -108,7 +108,7 @@ export default function Navbar() {
                 🛒 Carrito ({totalItems})
               </Link>
 
-              {userRole !== 'admin' && (
+              {user?.rol !== 'admin' && (
                 <Link
                   to="/mi-red"
                   className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"

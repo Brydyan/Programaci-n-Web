@@ -5,9 +5,10 @@ import Catalogo from './components/Catalogo';
 import MiRed from './components/MiRed';
 import Carrito from './components/Carrito';
 import Login from './components/Login';
-import Tienda from './components/Tienda';
+import Storefront from './components/Storefront';
 import DetalleProducto from './components/DetalleProducto';
 import Checkout from './components/Checkout';
+import Confirmacion from './components/Confirmacion';
 import Reportes from './components/Reportes';
 import Configuracion from './components/Configuracion';
 import { CartProvider } from './context/CartContext';
@@ -31,13 +32,13 @@ interface RoleProtectedRouteProps {
 }
 
 const RoleProtectedRoute = ({ allowedRoles }: RoleProtectedRouteProps) => {
-  const { isAuthenticated, userRole } = useAuth();
+  const { isAuthenticated, user } = useAuth();
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
-  if (userRole && !allowedRoles.includes(userRole)) {
+  if (user?.rol && !allowedRoles.includes(user.rol)) {
     return <Navigate to="/" replace />;
   }
 
@@ -59,10 +60,11 @@ function App() {
                 <Route path="/" element={<Layout />}>
                   <Route index element={<Dashboard />} />
                   <Route path="catalogo" element={<Catalogo />} />
-                  <Route path="tienda" element={<Tienda />} />
+                  <Route path="tienda" element={<Storefront />} />
                   <Route path="producto/:id" element={<DetalleProducto />} />
                   <Route path="carrito" element={<Carrito />} />
                   <Route path="checkout" element={<Checkout />} />
+                  <Route path="confirmacion" element={<Confirmacion />} />
                   <Route path="mi-red" element={<MiRed />} />
                 </Route>
               </Route>
