@@ -18,12 +18,12 @@ shadow-sm text-center">
                     {/* Lista de productos */}
                     <div className="lg:col-span-2 space-y-4">
                         {cart.map((item) => (
-                            <div key={item.id} className="flex items-center justify-between bgwhite p-4 rounded-lg border border-slate-200 shadow-sm">
+                            <div key={item.id} className="flex items-center justify-between bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                                 <div className="flex items-center gap-4">
                                     <img src={item.img} alt={item.nombre} className="w-16 h-16
 object-cover rounded-md" />
                                     <div>
-                                        <h3 className="font-semibold text-slate800">{item.nombre}</h3>
+                                        <h3 className="font-semibold text-slate-800">{item.nombre}</h3>
                                         <p className="text-sm text-slate-500">Cantidad:
                                             {item.cantidad}</p>
                                     </div>
@@ -54,7 +54,7 @@ mb-4">
                         </div>
                         <div className="flex justify-between items-center mb-6">
                             <span className="text-slate-800 font-bold">Total a Pagar</span>
-                            <span className="text-2xl font-bold text-indigo600">${totalPrice.toFixed(2)}</span>
+                            <span className="text-2xl font-bold text-indigo-600">${totalPrice.toFixed(2)}</span>
                         </div>
                         <button onClick={() => navigate('/checkout')} className="w-full bg-indigo-600 text-white py-3 rounded-lg
 font-semibold hover:bg-indigo-700 transition">

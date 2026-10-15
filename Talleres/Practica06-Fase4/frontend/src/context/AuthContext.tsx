@@ -25,8 +25,8 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
-    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-    const [userEmail, setUserEmail] = useState<string | null>(null);
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => !!localStorage.getItem("token"));
+    const [userEmail, setUserEmail] = useState<string | null>(() => localStorage.getItem("userEmail"));
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +36,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         try {
             const data = await loginAPI(email, password);
             localStorage.setItem("token", data.token);
+            localStorage.setItem("userEmail", data.email);
             setIsAuthenticated(true);
             setUserEmail(data.email);
         } catch (err) {
@@ -48,6 +49,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     const logout = () => {
         localStorage.removeItem("token");
+        localStorage.removeItem("userEmail");
         setIsAuthenticated(false);
         setUserEmail(null);
         setError(null);
