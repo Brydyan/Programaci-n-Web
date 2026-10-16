@@ -9,6 +9,7 @@ import Registro from './components/Registro';
 import DetalleProducto from './components/DetalleProducto';
 import Checkout from './components/Checkout';
 import Confirmacion from './components/Confirmacion';
+import AdminProductos from './components/AdminProductos';
 import { CartProvider } from './context/CartContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SidebarProvider } from './context/SidebarContext';
@@ -53,6 +54,7 @@ function App() {
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="mi-red" element={<MiRed />} />
+                <Route path="admin/productos" element={<AdminProductos />} />
               </Route>
             </Route>
 

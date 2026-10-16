@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { MdOutlineDashboard } from "react-icons/md";
+import { MdInventory2, MdOutlineDashboard } from "react-icons/md";
 import { GrCatalog } from "react-icons/gr";
 import { FaNetworkWired } from "react-icons/fa";
 import { useSidebar } from "../context/SidebarContext";
@@ -13,9 +13,10 @@ type Item = {
 };
 
 const items: Item[] = [
-    { to: "/",           label: "Dashboard", Icon: MdOutlineDashboard, roles: ["admin"] },
-    { to: "/catalogo",   label: "Catálogo",  Icon: GrCatalog,          roles: ["admin", "cliente"] },
-    { to: "/mi-red",     label: "Mi Red",    Icon: FaNetworkWired,     roles: ["admin"] },
+    { to: "/",                 label: "Dashboard",  Icon: MdOutlineDashboard, roles: ["admin"] },
+    { to: "/catalogo",         label: "Catálogo",   Icon: GrCatalog,          roles: ["admin", "cliente"] },
+    { to: "/mi-red",           label: "Mi Red",     Icon: FaNetworkWired,     roles: ["admin"] },
+    { to: "/admin/productos",  label: "Productos",  Icon: MdInventory2,       roles: ["admin"] },
 ];
 
 const Sidebar = () => {
