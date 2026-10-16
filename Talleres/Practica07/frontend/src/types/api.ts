@@ -135,7 +135,37 @@ export interface PedidoResumen {
   total: number;
   estado: Pedido['estado'];
   created_at: string;
+  email_usuario?: string;
+  usuario_id?: number;
 }
+export interface PedidoDetalle {
+  id: number;
+  usuario_id?: number;
+  email_usuario: string;
+  total: number;
+  metodo_pago: string;
+  estado: Pedido['estado'];
+  created_at: string;
+  items?: PedidoItem[];
+}
+
+export const ESTADOS_PEDIDO = [
+  'pendiente',
+  'preparando',
+  'enviado',
+  'entregado',
+  'cancelado',
+] as const;
+export type EstadoPedidoFE = (typeof ESTADOS_PEDIDO)[number];
+
+// FSM local (mirror del backend; el server es autoridad)
+export const TRANSICIONES_VALIDAS: Record<EstadoPedidoFE, EstadoPedidoFE[]> = {
+  pendiente: ['preparando', 'cancelado'],
+  preparando: ['enviado', 'cancelado'],
+  enviado: ['entregado', 'cancelado'],
+  entregado: [],
+  cancelado: [],
+};
 
 // ── Red / Comisiones ────────────────────────────────────────
 export interface NodoRed {

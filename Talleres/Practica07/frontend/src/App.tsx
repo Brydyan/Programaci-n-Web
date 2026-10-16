@@ -10,6 +10,8 @@ import DetalleProducto from './components/DetalleProducto';
 import Checkout from './components/Checkout';
 import Confirmacion from './components/Confirmacion';
 import AdminProductos from './components/AdminProductos';
+import MisPedidos from './components/MisPedidos';
+import AdminPedidos from './components/AdminPedidos';
 import { CartProvider } from './context/CartContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SidebarProvider } from './context/SidebarContext';
@@ -46,6 +48,7 @@ function App() {
                 <Route path="productos/:id" element={<DetalleProducto />} />
                 <Route path="checkout" element={<Checkout />} />
                 <Route path="confirmacion" element={<Confirmacion />} />
+                <Route path="mis-pedidos" element={<MisPedidos />} />
               </Route>
             </Route>
 
@@ -55,6 +58,7 @@ function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="mi-red" element={<MiRed />} />
                 <Route path="admin/productos" element={<AdminProductos />} />
+                <Route path="admin/pedidos" element={<AdminPedidos />} />
               </Route>
             </Route>
 

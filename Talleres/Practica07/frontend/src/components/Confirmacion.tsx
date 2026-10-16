@@ -35,12 +35,20 @@ const Confirmacion = () => {
           <p className="text-sm text-slate-600"><span className="font-semibold">Total:</span> ${pedido.total.toFixed(2)}</p>
           <p className="text-sm text-slate-600"><span className="font-semibold">Estado:</span> {pedido.estado}</p>
         </div>
-        <Link
-          to="/catalogo"
-          className="inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
-        >
-          Seguir comprando
-        </Link>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <Link
+            to="/catalogo"
+            className="inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
+          >
+            Seguir comprando
+          </Link>
+          <Link
+            to="/mis-pedidos"
+            className="inline-block bg-white text-indigo-700 border border-indigo-300 px-6 py-3 rounded-lg font-semibold hover:bg-indigo-50 transition"
+          >
+            Ver mis pedidos
+          </Link>
+        </div>
       </div>
     </div>
   );
