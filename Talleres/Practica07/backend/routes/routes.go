@@ -13,37 +13,38 @@ type Controllers struct {
 	Producto *controllers.ProductoController
 	Network  *controllers.NetworkController
 	Checkout *controllers.CheckoutController
+	Pedidos  *controllers.PedidosController
 }
 
 // SetupRoutes registra las rutas del backend.
 //
 // Parametrización para S1:
+//
 //   - jwtSecret: clave HMAC usada por Login para firmar tokens y por
-//     RequireAuth (F1+) para validarlos. Se inyecta también como
-//     c.Locals(middleware.JWTSecretKey) en cada request para que
-//     AuthController.Login pueda emitir tokens sin re-leer el entorno.
+//     RequireAuth para validarlos. Se inyecta también como
+//     c.Locals(middleware.JWTSecretKey) en cada request.
 //
-// IMPORTANTE para sprints futuros (F1–F7):
-//   - Las rutas NUEVAS admin/privadas deben protegerse con:
-//
-//     app.Get("/api/admin/...",
-//         middleware.RequireAuth(jwtSecret),
-//         middleware.RequireAdmin(),
-//         handler,
-//     )
-//
-//   - NO añadimos RequireAuth a las rutas existentes (/api/productos,
-//     /api/red, /api/checkout) en este sprint para no romper el contrato
-//     actual ni los tests existentes. Se hará en F4 (admin) y F5/F6
-//     (checkout, pedidos del usuario).
+// F3 (gestión de pedidos + ciclo de vida):
+//   - /api/checkout pasa a estar protegida con RequireAuth + RateLimit
+//     (el cliente debe estar autenticado para comprar). Rate limit por
+//     IP igual que /api/login: 10 req/min.
+//   - /api/pedidos/mios y /api/pedidos/:id: cliente autenticado.
+//   - /api/admin/pedidos (GET) y /api/admin/pedidos/:id/estado (PATCH):
+//     admin only.
 func SetupRoutes(app *fiber.App, ctrl Controllers, jwtSecret []byte) {
-	// Rutas públicas — S1 las mantiene abiertas por diseño.
+	// Rutas públicas — siguen abiertas: health, catálogo público, red.
 	app.Get("/api/health", controllers.HealthCheck)
 	app.Get("/api/productos", ctrl.Producto.GetProductos)
 	app.Get("/api/productos/:id", ctrl.Producto.GetProductoPorID)
 	app.Get("/api/producto/:id", ctrl.Producto.GetProductoPorID)
 	app.Get("/api/red", ctrl.Network.GetRed)
-	app.Post("/api/checkout", ctrl.Checkout.Checkout)
+
+	// Checkout (F3): ahora protegido. RateLimit 10/min igual que auth.
+	app.Post("/api/checkout",
+		middleware.RequireAuth(jwtSecret),
+		middleware.RateLimit(10, time.Minute),
+		ctrl.Checkout.Checkout,
+	)
 
 	// Rutas de auth — rate-limited a 10 req/min por IP (login + register).
 	// Aplicamos RateLimit SÓLO a estas dos (no global), tal como pide el sprint.
@@ -56,10 +57,15 @@ func SetupRoutes(app *fiber.App, ctrl Controllers, jwtSecret []byte) {
 		ctrl.Auth.Register, // placeholder F1: devuelve 501
 	)
 
-	// Rutas admin (F2): requieren JWT válido (RequireAuth) y rol=admin
-	// (RequireAdmin). El orden es importante — RequireAdmin lee
-	// c.Locals(LocalUserKey) que RequireAuth pobla. Cualquier ruta admin
-	// futura debe añadirse aquí.
+	// Rutas de pedidos del cliente autenticado (F3). Requieren JWT pero
+	// NO rol admin: el cliente puede ver sus propios pedidos.
+	auth := app.Group("/api", middleware.RequireAuth(jwtSecret))
+	auth.Get("/pedidos/mios", ctrl.Pedidos.GetMisPedidos)
+	auth.Get("/pedidos/:id", ctrl.Pedidos.GetPedidoDetalle)
+
+	// Rutas admin (F2 + F3): requieren JWT válido (RequireAuth) y
+	// rol=admin (RequireAdmin). El orden es importante — RequireAdmin
+	// lee c.Locals(LocalUserKey) que RequireAuth pobla.
 	admin := app.Group("/api/admin",
 		middleware.RequireAuth(jwtSecret),
 		middleware.RequireAdmin(),
@@ -68,4 +74,7 @@ func SetupRoutes(app *fiber.App, ctrl Controllers, jwtSecret []byte) {
 	admin.Post("/productos", ctrl.Producto.AdminCreate)
 	admin.Put("/productos/:id", ctrl.Producto.AdminUpdate)
 	admin.Delete("/productos/:id", ctrl.Producto.AdminDelete)
+	// Pedidos admin (F3): listado global + cambio de estado con FSM.
+	admin.Get("/pedidos", ctrl.Pedidos.GetPedidosAdmin)
+	admin.Patch("/pedidos/:id/estado", ctrl.Pedidos.PatchEstado)
 }

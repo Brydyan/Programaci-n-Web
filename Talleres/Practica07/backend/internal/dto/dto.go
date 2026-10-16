@@ -86,6 +86,17 @@ type ProductoUpdate struct {
 	Activo    *bool   `json:"activo"             validate:"omitempty"`
 }
 
+// ─────────────────────────── Pedido (F3) ───────────────────────────
+
+// PedidoEstadoUpdate es el cuerpo de PATCH /api/admin/pedidos/:id/estado.
+// Sólo acepta los 5 estados válidos del CHECK del schema (alineado con
+// domain.EstadoPedido). El validator `oneof` rechaza cualquier valor
+// fuera de la lista antes de llegar al repository, que a su vez valida
+// la transición con la FSM (domain.EsTransicionValida).
+type PedidoEstadoUpdate struct {
+	Estado string `json:"estado" validate:"required,oneof=pendiente preparando enviado entregado cancelado"`
+}
+
 // Validate es un helper de cortesía que usa `reflect` para auto-detectar
 // si el target es un puntero, requerido por validator.Struct.
 //

@@ -64,6 +64,7 @@ func setupTestApp() *fiber.App {
 		Producto: controllers.NewProductoController(repo, cache),
 		Network:  controllers.NewNetworkController(repo, cache),
 		Checkout: controllers.NewCheckoutController(repo, cache),
+		Pedidos:  controllers.NewPedidosController(repo, cache),
 	}
 
 	app := fiber.New()
@@ -110,6 +111,7 @@ func setupTestDB(t *testing.T) (*fiber.App, *sql.DB) {
 		Producto: controllers.NewProductoController(repo, cache),
 		Network:  controllers.NewNetworkController(repo, cache),
 		Checkout: controllers.NewCheckoutController(repo, cache),
+		Pedidos:  controllers.NewPedidosController(repo, cache),
 	}
 
 	app := fiber.New()
@@ -651,29 +653,45 @@ func TestNetwork(t *testing.T) {
 func TestCheckout(t *testing.T) {
 	app := setupTestApp()
 
-	t.Run("Invalid JSON", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader("invalid"))
-		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("Missing email", func(t *testing.T) {
-		body := `{"nombre":"Test","email":"","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("No DB returns 500", func(t *testing.T) {
+	t.Run("Sin auth → 401", func(t *testing.T) {
+		// F3 migró /api/checkout a RequireAuth — sin token debe ser 401.
 		body := `{"nombre":"Test","email":"test@email.com","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("Auth + Invalid JSON → 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader("invalid"))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", clientAuthHeader(t))
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("Auth + Carrito vacío → 400", func(t *testing.T) {
+		// Carrito vacío lo valida el controller tras el BodyParser.
+		body := `{"nombre":"Test","email":"test@email.com","metodo_pago":"tarjeta","items":[]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", clientAuthHeader(t))
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("Auth + sin DB → 500", func(t *testing.T) {
+		// Pasamos auth pero el repo tiene db=nil → 500 INTERNAL.
+		body := `{"nombre":"Test","email":"test@email.com","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", clientAuthHeader(t))
 		resp, _ := app.Test(req)
 		if resp.StatusCode != http.StatusInternalServerError {
 			t.Errorf("expected 500 (no DB), got %d", resp.StatusCode)
@@ -1179,6 +1197,7 @@ func TestProductoCacheInvalidation(t *testing.T) {
 		Producto: controllers.NewProductoController(repo, cache),
 		Network:  controllers.NewNetworkController(repo, cache),
 		Checkout: controllers.NewCheckoutController(repo, cache),
+		Pedidos:  controllers.NewPedidosController(repo, cache),
 	}
 	app := fiber.New()
 	app.Use(middleware.SecurityHeaders())
@@ -1301,5 +1320,544 @@ func seedProductos(t *testing.T, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("[seedProductos] %s: %v", s.nombre, err)
 		}
+	}
+}
+
+// ─────────────────────────── Pedidos (F3) ───────────────────────────
+
+// authHeaderFor devuelve "Bearer <jwt>" firmado con el secret de tests
+// para un usuario arbitrario (sub/email/rol). A diferencia de los
+// helpers adminAuthHeader/clientAuthHeader (que están hard-coded a los
+// seeds), este helper deja parametrizar el id y email — necesario para
+// los tests F3 que crean usuarios extra dinámicamente.
+func authHeaderFor(t *testing.T, sub int, email, rol string) string {
+	t.Helper()
+	tok, err := middleware.SignJWT(testJWTSecret, middleware.JWTClaims{
+		Sub:   sub,
+		Email: email,
+		Rol:   rol,
+		Exp:   time.Now().Add(1 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("SignJWT: %v", err)
+	}
+	return "Bearer " + tok
+}
+
+// doJSON ejecuta un request HTTP contra la app Fiber y devuelve status +
+// body. Encapsula el patrón repetido en los tests de F3.
+func doJSON(t *testing.T, app *fiber.App, method, path, body, authHeader string) (int, []byte) {
+	t.Helper()
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, path, nil)
+	} else {
+		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+	}
+	if authHeader != "" {
+		r.Header.Set("Authorization", authHeader)
+	}
+	resp, err := app.Test(r, -1)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b
+}
+
+// seedUsuario inserta un usuario extra (no-seed) con referido_nulo para
+// tests que necesiten un cliente "limpio" (sin pedidos previos).
+//
+// Si `linkUpline` es true, además crea un nodo en `referidos` con
+// parent_id=1 (TU) y actualiza usuarios.referido_id, de modo que
+// ActualizarComisiones pueda caminar el árbol y registrar comisiones.
+// Devuelve el id asignado.
+func seedUsuario(t *testing.T, db *sql.DB, email, rol string, linkUpline bool) int {
+	t.Helper()
+	hash := bcryptHashForTest(t, "12345678")
+	var id int
+	err := db.QueryRow(
+		`INSERT INTO usuarios (email, password_hash, rol, nombre, activo)
+		 VALUES ($1, $2, $3, $4, true)
+		 ON CONFLICT (email) DO UPDATE SET activo = true
+		 RETURNING id`,
+		email, hash, rol, "Test User",
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("[seedUsuario] %s: %v", email, err)
+	}
+	if linkUpline {
+		// Crear nodo de referido único para este usuario, hijo de TU (id=1).
+		// El código se genera determinísticamente a partir del id para que
+		// truncateTestDB + re-run no choquen con UNIQUE(codigo).
+		codigo := fmt.Sprintf("T%07d", id)
+		var rid int
+		if err := db.QueryRow(
+			`INSERT INTO referidos (codigo, parent_id, usuario_id)
+			 VALUES ($1, 1, $2) RETURNING id`,
+			codigo, id,
+		).Scan(&rid); err != nil {
+			t.Fatalf("[seedUsuario] insert referidos para %s: %v", email, err)
+		}
+		if _, err := db.Exec(
+			`UPDATE usuarios SET referido_id = $1 WHERE id = $2`,
+			rid, id,
+		); err != nil {
+			t.Fatalf("[seedUsuario] update usuarios.referido_id para %s: %v", email, err)
+		}
+	}
+	return id
+}
+
+// seedPedido crea un pedido + items directamente en DB (sin pasar por el
+// handler de checkout). Útil para los tests de PATCH y de detalle que
+// necesitan un pedido preexistente en un estado concreto. Devuelve el id
+// del pedido.
+//
+// Items recibe {producto_id, cantidad} para poder controlar el stock
+// inicial que se descuenta.
+func seedPedido(t *testing.T, db *sql.DB, usuarioID int, email string, estado string,
+	items []struct{ ProductoID, Cantidad int }) int {
+	t.Helper()
+
+	var total float64
+	type linea struct {
+		productoID, cantidad int
+		nombre              string
+		precio              float64
+	}
+	lineas := make([]linea, 0, len(items))
+	for _, it := range items {
+		var nombre string
+		var precio float64
+		if err := db.QueryRow(
+			`SELECT nombre, precio FROM productos WHERE id = $1`,
+			it.ProductoID,
+		).Scan(&nombre, &precio); err != nil {
+			t.Fatalf("[seedPedido] leyendo producto %d: %v", it.ProductoID, err)
+		}
+		lineas = append(lineas, linea{
+			productoID: it.ProductoID, cantidad: it.Cantidad,
+			nombre: nombre, precio: precio,
+		})
+		total += precio * float64(it.Cantidad)
+	}
+
+	var pedidoID int
+	if err := db.QueryRow(
+		`INSERT INTO pedidos (email_usuario, usuario_id, total, metodo_pago, estado)
+		 VALUES ($1, $2, $3, 'tarjeta', $4) RETURNING id`,
+		email, usuarioID, total, estado,
+	).Scan(&pedidoID); err != nil {
+		t.Fatalf("[seedPedido] insert pedido: %v", err)
+	}
+	for _, l := range lineas {
+		if _, err := db.Exec(
+			`INSERT INTO pedido_items (pedido_id, producto_id, nombre, precio, cantidad)
+			 VALUES ($1, $2, $3, $4, $5)`,
+			pedidoID, l.productoID, l.nombre, l.precio, l.cantidad,
+		); err != nil {
+			t.Fatalf("[seedPedido] insert item: %v", err)
+		}
+	}
+	return pedidoID
+}
+
+// ── Tests F3 ───────────────────────────────────────────────
+
+func TestMisPedidos(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	// 2 clientes con pedidos propios.
+	uidA := seedUsuario(t, db, "clienteA@upse.edu.ec", "cliente", false)
+	uidB := seedUsuario(t, db, "clienteB@upse.edu.ec", "cliente", false)
+	_ = seedPedido(t, db, uidA, "clienteA@upse.edu.ec", "pendiente",
+		[]struct{ ProductoID, Cantidad int }{{1, 1}})
+	_ = seedPedido(t, db, uidA, "clienteA@upse.edu.ec", "pendiente",
+		[]struct{ ProductoID, Cantidad int }{{2, 1}})
+	_ = seedPedido(t, db, uidB, "clienteB@upse.edu.ec", "pendiente",
+		[]struct{ ProductoID, Cantidad int }{{3, 1}})
+
+	authA := authHeaderFor(t, uidA, "clienteA@upse.edu.ec", "cliente")
+	authB := authHeaderFor(t, uidB, "clienteB@upse.edu.ec", "cliente")
+
+	t.Run("Cliente A ve sus 2 pedidos", func(t *testing.T) {
+		status, body := doJSON(t, app, http.MethodGet, "/api/pedidos/mios", "", authA)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", status, body)
+		}
+		var res struct {
+			Data  []models.PedidoResumen `json:"data"`
+			Total int                    `json:"total"`
+		}
+		_ = json.Unmarshal(body, &res)
+		if res.Total != 2 || len(res.Data) != 2 {
+			t.Errorf("esperaba 2 pedidos del cliente A, got total=%d len=%d",
+				res.Total, len(res.Data))
+		}
+	})
+
+	t.Run("Cliente B ve su único pedido", func(t *testing.T) {
+		status, body := doJSON(t, app, http.MethodGet, "/api/pedidos/mios", "", authB)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d", status)
+		}
+		var res struct {
+			Data  []models.PedidoResumen `json:"data"`
+			Total int                    `json:"total"`
+		}
+		_ = json.Unmarshal(body, &res)
+		if res.Total != 1 || len(res.Data) != 1 {
+			t.Errorf("esperaba 1 pedido del cliente B, got total=%d len=%d",
+				res.Total, len(res.Data))
+		}
+	})
+}
+
+func TestMisPedidosSinAuth(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+
+	status, body := doJSON(t, app, http.MethodGet, "/api/pedidos/mios", "", "")
+	if status != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d body=%s", status, body)
+	}
+}
+
+func TestPedidosAdmin(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	uidC := seedUsuario(t, db, "clienteC@upse.edu.ec", "cliente", false)
+	// 3 pedidos de clienteC + 1 pedido admin.
+	_ = seedPedido(t, db, uidC, "clienteC@upse.edu.ec", "pendiente",
+		[]struct{ ProductoID, Cantidad int }{{1, 1}})
+	_ = seedPedido(t, db, uidC, "clienteC@upse.edu.ec", "preparando",
+		[]struct{ ProductoID, Cantidad int }{{2, 1}})
+	_ = seedPedido(t, db, uidC, "clienteC@upse.edu.ec", "cancelado",
+		[]struct{ ProductoID, Cantidad int }{{3, 1}})
+	_ = seedPedido(t, db, 1, "admin@upse.edu.ec", "entregado",
+		[]struct{ ProductoID, Cantidad int }{{4, 1}})
+
+	adminAuth := adminAuthHeader(t)
+	clientAuth := clientAuthHeader(t)
+
+	t.Run("Admin ve todos (sin filtro)", func(t *testing.T) {
+		status, body := doJSON(t, app, http.MethodGet, "/api/admin/pedidos", "", adminAuth)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", status, body)
+		}
+		var res struct {
+			Data  []models.PedidoResumen `json:"data"`
+			Total int                    `json:"total"`
+		}
+		_ = json.Unmarshal(body, &res)
+		if res.Total != 4 {
+			t.Errorf("esperaba 4 pedidos total, got %d", res.Total)
+		}
+	})
+
+	t.Run("Admin filtra por estado=cancelado", func(t *testing.T) {
+		status, body := doJSON(t, app, http.MethodGet, "/api/admin/pedidos?estado=cancelado", "", adminAuth)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d", status)
+		}
+		var res struct {
+			Data  []models.PedidoResumen `json:"data"`
+			Total int                    `json:"total"`
+		}
+		_ = json.Unmarshal(body, &res)
+		if res.Total != 1 {
+			t.Errorf("esperaba 1 pedido cancelado, got %d", res.Total)
+		}
+		if len(res.Data) >= 1 && res.Data[0].Estado != "cancelado" {
+			t.Errorf("esperaba estado cancelado, got %q", res.Data[0].Estado)
+		}
+	})
+
+	t.Run("Cliente no-admin → 403", func(t *testing.T) {
+		status, body := doJSON(t, app, http.MethodGet, "/api/admin/pedidos", "", clientAuth)
+		if status != http.StatusForbidden {
+			t.Errorf("esperaba 403, got %d body=%s", status, body)
+		}
+	})
+
+	t.Run("Sin auth → 401", func(t *testing.T) {
+		status, _ := doJSON(t, app, http.MethodGet, "/api/admin/pedidos", "", "")
+		if status != http.StatusUnauthorized {
+			t.Errorf("esperaba 401, got %d", status)
+		}
+	})
+}
+
+func TestPedidoDetalle(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	uidA := seedUsuario(t, db, "clienteDetA@upse.edu.ec", "cliente", false)
+	uidB := seedUsuario(t, db, "clienteDetB@upse.edu.ec", "cliente", false)
+	pedidoA := seedPedido(t, db, uidA, "clienteDetA@upse.edu.ec", "pendiente",
+		[]struct{ ProductoID, Cantidad int }{{1, 2}, {2, 1}})
+
+	authA := authHeaderFor(t, uidA, "clienteDetA@upse.edu.ec", "cliente")
+	authB := authHeaderFor(t, uidB, "clienteDetB@upse.edu.ec", "cliente")
+	adminAuth := adminAuthHeader(t)
+
+	t.Run("Dueño ve el detalle", func(t *testing.T) {
+		path := fmt.Sprintf("/api/pedidos/%d", pedidoA)
+		status, body := doJSON(t, app, http.MethodGet, path, "", authA)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", status, body)
+		}
+		var det models.PedidoDetalle
+		_ = json.Unmarshal(body, &det)
+		if det.ID != pedidoA {
+			t.Errorf("id esperado %d, got %d", pedidoA, det.ID)
+		}
+		if len(det.Items) != 2 {
+			t.Errorf("esperaba 2 items, got %d", len(det.Items))
+		}
+	})
+
+	t.Run("Admin ve cualquier pedido", func(t *testing.T) {
+		path := fmt.Sprintf("/api/pedidos/%d", pedidoA)
+		status, body := doJSON(t, app, http.MethodGet, path, "", adminAuth)
+		if status != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", status, body)
+		}
+	})
+
+	t.Run("Otro cliente → 404 (no exponer existencia)", func(t *testing.T) {
+		path := fmt.Sprintf("/api/pedidos/%d", pedidoA)
+		status, body := doJSON(t, app, http.MethodGet, path, "", authB)
+		if status != http.StatusNotFound {
+			t.Errorf("esperaba 404, got %d body=%s", status, body)
+		}
+	})
+}
+
+func TestPedidoDetalleNoExiste(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+
+	uidX := seedUsuario(t, db, "cliente404@upse.edu.ec", "cliente", false)
+	authX := authHeaderFor(t, uidX, "cliente404@upse.edu.ec", "cliente")
+
+	status, body := doJSON(t, app, http.MethodGet, "/api/pedidos/999999", "", authX)
+	if status != http.StatusNotFound {
+		t.Errorf("esperaba 404, got %d body=%s", status, body)
+	}
+}
+
+func TestCambiarEstadoHappy(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	uid := seedUsuario(t, db, "clienteHappy@upse.edu.ec", "cliente", false)
+	pedidoID := seedPedido(t, db, uid, "clienteHappy@upse.edu.ec", "pendiente",
+		[]struct{ ProductoID, Cantidad int }{{1, 1}})
+	adminAuth := adminAuthHeader(t)
+
+	path := fmt.Sprintf("/api/admin/pedidos/%d/estado", pedidoID)
+	for _, estado := range []string{"preparando", "enviado", "entregado"} {
+		body := fmt.Sprintf(`{"estado":"%s"}`, estado)
+		status, b := doJSON(t, app, http.MethodPatch, path, body, adminAuth)
+		if status != http.StatusNoContent {
+			t.Errorf("PATCH a %s: expected 204, got %d body=%s", estado, status, b)
+		}
+	}
+
+	// Verificación final en DB.
+	var estadoActual string
+	if err := db.QueryRow(`SELECT estado FROM pedidos WHERE id = $1`, pedidoID).Scan(&estadoActual); err != nil {
+		t.Fatalf("leyendo estado final: %v", err)
+	}
+	if estadoActual != "entregado" {
+		t.Errorf("estado final esperado=entregado, got=%q", estadoActual)
+	}
+}
+
+func TestCambiarEstadoInvalido(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	uid := seedUsuario(t, db, "clienteInv@upse.edu.ec", "cliente", false)
+	// Pedido ya en 'entregado' → intentar volver a 'pendiente' es ilegal.
+	pedidoID := seedPedido(t, db, uid, "clienteInv@upse.edu.ec", "entregado",
+		[]struct{ ProductoID, Cantidad int }{{1, 1}})
+	adminAuth := adminAuthHeader(t)
+
+	path := fmt.Sprintf("/api/admin/pedidos/%d/estado", pedidoID)
+	body := `{"estado":"pendiente"}`
+	status, respBody := doJSON(t, app, http.MethodPatch, path, body, adminAuth)
+	if status != http.StatusConflict {
+		t.Fatalf("esperaba 409, got %d body=%s", status, respBody)
+	}
+	var ae apiErr
+	_ = json.Unmarshal(respBody, &ae)
+	if ae.Code != "INVALID_TRANSITION" {
+		t.Errorf("esperaba code=INVALID_TRANSITION, got %q", ae.Code)
+	}
+}
+
+func TestCancelarDevuelveStock(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	uid := seedUsuario(t, db, "clienteStock@upse.edu.ec", "cliente", false)
+
+	// Stock inicial del producto 1 (Serum) = 50.
+	// Crear pedido vía POST /api/checkout (usa CreatePedidoConUsuario,
+	// que descuenta stock en la tx).
+	authC := authHeaderFor(t, uid, "clienteStock@upse.edu.ec", "cliente")
+	checkoutBody := `{
+		"nombre":"Cliente Stock",
+		"email":"clienteStock@upse.edu.ec",
+		"direccion":"Calle 1",
+		"ciudad":"Loja",
+		"telefono":"0999999999",
+		"metodo_pago":"tarjeta",
+		"items":[{"id":1,"nombre":"Serum Revitalizante","precio":45.0,"cantidad":3}]
+	}`
+	status, body := doJSON(t, app, http.MethodPost, "/api/checkout", checkoutBody, authC)
+	if status != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d body=%s", status, body)
+	}
+	var det models.PedidoDetalle
+	_ = json.Unmarshal(body, &det)
+
+	// Verificar stock descontado: 50 - 3 = 47.
+	var stockAfterCheckout int
+	if err := db.QueryRow(`SELECT stock FROM productos WHERE id = 1`).Scan(&stockAfterCheckout); err != nil {
+		t.Fatalf("leyendo stock post-checkout: %v", err)
+	}
+	if stockAfterCheckout != 47 {
+		t.Errorf("stock post-checkout esperado=47, got=%d", stockAfterCheckout)
+	}
+
+	// Cancelar el pedido.
+	adminAuth := adminAuthHeader(t)
+	patchPath := fmt.Sprintf("/api/admin/pedidos/%d/estado", det.ID)
+	patchBody := `{"estado":"cancelado"}`
+	status, _ = doJSON(t, app, http.MethodPatch, patchPath, patchBody, adminAuth)
+	if status != http.StatusNoContent {
+		t.Fatalf("PATCH cancelar: expected 204, got %d", status)
+	}
+
+	// Stock debe haber vuelto a 50.
+	var stockAfterCancel int
+	if err := db.QueryRow(`SELECT stock FROM productos WHERE id = 1`).Scan(&stockAfterCancel); err != nil {
+		t.Fatalf("leyendo stock post-cancel: %v", err)
+	}
+	if stockAfterCancel != 50 {
+		t.Errorf("stock post-cancel esperado=50, got=%d", stockAfterCancel)
+	}
+
+	// Verificar estado del pedido en DB.
+	var estado string
+	if err := db.QueryRow(`SELECT estado FROM pedidos WHERE id = $1`, det.ID).Scan(&estado); err != nil {
+		t.Fatalf("leyendo estado: %v", err)
+	}
+	if estado != "cancelado" {
+		t.Errorf("estado pedido esperado=cancelado, got=%q", estado)
+	}
+}
+
+func TestCancelarRevierteComisiones(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	truncateTestDB(t, db)
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	// linkUpline=true crea el nodo de referido hijo de TU (id=1) para
+	// que ActualizarComisiones registre al menos 1 comisión con
+	// pedido_id enlazado.
+	uid := seedUsuario(t, db, "clienteCom@upse.edu.ec", "cliente", true)
+	authC := authHeaderFor(t, uid, "clienteCom@upse.edu.ec", "cliente")
+
+	// Checkout para generar comisiones con pedido_id enlazado.
+	checkoutBody := `{
+		"nombre":"Cliente Com",
+		"email":"clienteCom@upse.edu.ec",
+		"direccion":"Calle 2",
+		"ciudad":"Loja",
+		"telefono":"0999999999",
+		"metodo_pago":"tarjeta",
+		"items":[{"id":1,"nombre":"Serum Revitalizante","precio":45.0,"cantidad":1}]
+	}`
+	status, body := doJSON(t, app, http.MethodPost, "/api/checkout", checkoutBody, authC)
+	if status != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d body=%s", status, body)
+	}
+	var det models.PedidoDetalle
+	_ = json.Unmarshal(body, &det)
+
+	// Esperar a que la goroutine de comisiones termine (sleep 200ms en el
+	// controller + latencia). Sin esto, podemos leer antes de que escriba.
+	time.Sleep(600 * time.Millisecond)
+
+	// Verificar que hay al menos una comisión con pedido_id = det.ID en
+	// estado 'pendiente'.
+	var countPendiente int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM comisiones
+		  WHERE pedido_id = $1 AND estado = 'pendiente'`,
+		det.ID,
+	).Scan(&countPendiente); err != nil {
+		t.Fatalf("leyendo comisiones: %v", err)
+	}
+	if countPendiente == 0 {
+		t.Fatalf("esperaba >=1 comision pendiente con pedido_id=%d, got 0", det.ID)
+	}
+
+	// Cancelar el pedido.
+	adminAuth := adminAuthHeader(t)
+	patchPath := fmt.Sprintf("/api/admin/pedidos/%d/estado", det.ID)
+	patchBody := `{"estado":"cancelado"}`
+	status, _ = doJSON(t, app, http.MethodPatch, patchPath, patchBody, adminAuth)
+	if status != http.StatusNoContent {
+		t.Fatalf("PATCH cancelar: expected 204, got %d", status)
+	}
+
+	// Las comisiones pendientes de ese pedido deben estar ahora 'revertida'.
+	var countRevertida int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM comisiones
+		  WHERE pedido_id = $1 AND estado = 'revertida'`,
+		det.ID,
+	).Scan(&countRevertida); err != nil {
+		t.Fatalf("leyendo comisiones revertidas: %v", err)
+	}
+	if countRevertida == 0 {
+		t.Errorf("esperaba >=1 comision revertida con pedido_id=%d, got 0", det.ID)
+	}
+
+	// Y ya no debe haber pendientes del mismo pedido.
+	var countPendientePost int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM comisiones
+		  WHERE pedido_id = $1 AND estado = 'pendiente'`,
+		det.ID,
+	).Scan(&countPendientePost); err != nil {
+		t.Fatalf("leyendo comisiones pendientes post-cancel: %v", err)
+	}
+	if countPendientePost != 0 {
+		t.Errorf("esperaba 0 comisiones pendientes post-cancel, got %d", countPendientePost)
 	}
 }

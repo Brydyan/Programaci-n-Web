@@ -22,6 +22,10 @@ type APIError struct {
 //	ErrCodigoRefInvalido     → 400 VALIDATION_ERROR
 //	ErrProductoNoEncontrado  → 404 NOT_FOUND
 //	ErrProductoDuplicado     → 409 CONFLICT (nombre duplicado; opcional F2)
+//	ErrPedidoNoEncontrado    → 404 NOT_FOUND
+//	ErrNoEsDuenyo            → 404 NOT_FOUND (mapeado desde el controller;
+//	                            no exponemos existencia del pedido a otros
+//	                            clientes — preferimos 404 antes que 403)
 var (
 	ErrCredencialesInvalidas = errors.New("credenciales inválidas")
 	ErrCuentaDesactivada     = errors.New("cuenta desactivada")
@@ -30,6 +34,8 @@ var (
 	ErrCodigoRefInvalido     = errors.New("código de referido inválido")
 	ErrProductoNoEncontrado   = errors.New("producto no encontrado")
 	ErrProductoDuplicado     = errors.New("producto ya existe")
+	ErrPedidoNoEncontrado    = errors.New("pedido no encontrado")
+	ErrNoEsDuenyo            = errors.New("no autorizado: no es dueño del pedido")
 )
 
 // LoginRequest define la estructura esperada para el cuerpo de la petición (JSON) al iniciar sesión.
@@ -125,4 +131,51 @@ type Pedido struct {
 	ID     int     `json:"id"`
 	Total  float64 `json:"total"`
 	Estado string  `json:"estado"`
+}
+
+// PedidoDetalle es la vista completa de un pedido: cabecera + items.
+// Es lo que devuelve GET /api/pedidos/:id y lo que regresa el checkout
+// (POST /api/checkout) tras el COMMIT para que el FE tenga todo lo que
+// necesita confirmar sin un GET extra.
+//
+// Campos:
+//   - UsuarioID: puntero porque la columna pedidos.usuario_id permite
+//     NULL (pedidos legacy de la migración 005 sin usuario asociado).
+//     En código nuevo SIEMPRE se llena — el checkout lo exige.
+//   - EmailUsuario: legado, conservado para no romper el FE existente y
+//     porque el seed 005 mantiene filas con email_usuario NOT NULL.
+//   - Items: slice de PedidoItem; nil si el pedido no tiene items (no
+//     debería pasar, pero el repo lo deja defensive).
+type PedidoDetalle struct {
+	ID           int          `json:"id"`
+	UsuarioID    *int         `json:"usuario_id,omitempty"`
+	EmailUsuario string       `json:"email_usuario"`
+	Total        float64      `json:"total"`
+	MetodoPago   string       `json:"metodo_pago"`
+	Estado       string       `json:"estado"`
+	CreatedAt    string       `json:"created_at"`
+	Items        []PedidoItem `json:"items,omitempty"`
+}
+
+// PedidoItem refleja la fila de pedido_items. producto_id se conserva
+// aunque el producto esté soft-deleted — la FK tiene ON DELETE RESTRICT
+// desde pedido_items pero el producto puede tener activo=false.
+type PedidoItem struct {
+	ID         int     `json:"id"`
+	ProductoID int     `json:"producto_id"`
+	Nombre     string  `json:"nombre"`
+	Precio     float64 `json:"precio"`
+	Cantidad   int     `json:"cantidad"`
+}
+
+// PedidoResumen es la fila "ligera" usada por los listados paginados
+// (GET /api/pedidos/mios y GET /api/admin/pedidos). No incluye items —
+// el FE los pide aparte con GET /api/pedidos/:id cuando el cliente abre
+// el detalle.
+type PedidoResumen struct {
+	ID        int     `json:"id"`
+	UsuarioID *int    `json:"usuario_id,omitempty"`
+	Total     float64 `json:"total"`
+	Estado    string  `json:"estado"`
+	CreatedAt string  `json:"created_at"`
 }

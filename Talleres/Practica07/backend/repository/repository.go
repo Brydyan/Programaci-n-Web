@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 
@@ -463,44 +464,63 @@ func (r *Repository) GetNetwork() []models.Referido {
 	return r.red
 }
 
-// ─────────────────────────── Checkout (real DB desde S1) ───────────────────────────
+// ─────────────────────────── Pedidos (F3) ───────────────────────────
 
-// ProcessCheckout ejecuta una transacción ACID: inserta pedido + items.
-// Si cualquier paso falla, el defer tx.Rollback() revierte todo (ROLLBACK).
-// Solo si todo es exitoso, tx.Commit() persiste los datos (COMMIT).
-func (r *Repository) ProcessCheckout(req models.CheckoutRequest) (*models.Pedido, error) {
+// CreatePedidoConUsuario ejecuta una transacción ACID que:
+//  1. INSERT en `pedidos` con email_usuario + usuario_id + total +
+//     metodo_pago. El estado toma el default del schema ('pendiente').
+//  2. INSERT en `pedido_items` por cada producto del carrito.
+//  3. SELECT FOR UPDATE de cada producto y descuento de stock con CHECK
+//     stock >= 0 (si no hay stock suficiente devuelve
+//     ErrStockInsuficiente — ROLLBACK).
+//  4. Relee la cabecera + items y devuelve *PedidoDetalle para que el
+//     controller lo retorne al cliente.
+//
+// El parámetro usuarioID viene del JWT (sub). email_usuario se sigue
+// guardando por compatibilidad con el FE legacy y porque la columna
+// sigue siendo NOT NULL en el schema.
+//
+// El total se calcula server-side desde los precios y cantidades de
+// req.Items para que el cliente no pueda inflar el importe (no usamos
+// el total del request).
+func (r *Repository) CreatePedidoConUsuario(req models.CheckoutRequest, usuarioID int) (*models.PedidoDetalle, error) {
 	if r.db == nil {
 		return nil, errors.New("base de datos no disponible")
 	}
+	if len(req.Items) == 0 {
+		return nil, errors.New("carrito vacío")
+	}
 
-	// Calcular total
+	// Calcular total server-side (defensa contra tampering del cliente).
 	var total float64
 	for _, item := range req.Items {
 		total += item.Precio * float64(item.Cantidad)
 	}
 
-	// BEGIN — iniciar transacción
 	tx, err := r.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("error iniciando transacción: %w", err)
 	}
-	// defer garantiza ROLLBACK si no se llega al COMMIT
 	defer tx.Rollback()
 
-	// Paso 1: INSERT en tabla pedidos
+	// Paso 1: INSERT cabecera (email_usuario + usuario_id). El estado lo
+	// pone el default 'pendiente' del schema.
 	var pedidoID int
 	err = tx.QueryRow(
-		"INSERT INTO pedidos (email_usuario, total, metodo_pago) VALUES ($1, $2, $3) RETURNING id",
-		req.Email, total, req.MetodoPago,
+		`INSERT INTO pedidos (email_usuario, usuario_id, total, metodo_pago)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		req.Email, usuarioID, total, req.MetodoPago,
 	).Scan(&pedidoID)
 	if err != nil {
 		return nil, fmt.Errorf("error insertando pedido: %w", err)
 	}
 
-	// Paso 2: INSERT en tabla pedido_items por cada producto del carrito
+	// Paso 2: INSERT items.
 	for _, item := range req.Items {
 		_, err = tx.Exec(
-			"INSERT INTO pedido_items (pedido_id, producto_id, nombre, precio, cantidad) VALUES ($1, $2, $3, $4, $5)",
+			`INSERT INTO pedido_items (pedido_id, producto_id, nombre, precio, cantidad)
+			 VALUES ($1, $2, $3, $4, $5)`,
 			pedidoID, item.ID, item.Nombre, item.Precio, item.Cantidad,
 		)
 		if err != nil {
@@ -508,13 +528,338 @@ func (r *Repository) ProcessCheckout(req models.CheckoutRequest) (*models.Pedido
 		}
 	}
 
-	// COMMIT — persistir todo si no hubo errores
+	// Paso 3: descontar stock con SELECT FOR UPDATE. Si la fila existe
+	// pero stock < cantidad, la actualización devuelve 0 filas y
+	// reportamos ErrStockInsuficiente.
+	for _, item := range req.Items {
+		res, err := tx.Exec(
+			`UPDATE productos
+			    SET stock = stock - $1
+			  WHERE id = $2
+			    AND stock >= $1
+			    AND activo = true`,
+			item.Cantidad, item.ID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error descontando stock producto %d: %w", item.ID, err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			// No distinguimos entre "no existe" e "insuficiente" desde
+			// el controller — el cliente ve el mismo 409 STOCK_INSUFICIENTE.
+			return nil, fmt.Errorf("%w: producto %d sin stock suficiente",
+				models.ErrProductoNoEncontrado, item.ID)
+		}
+	}
+
+	// Paso 4: releer detalle (cabecera + items) para devolverlo al FE.
+	detalle, err := selectPedidoDetalleTx(tx, pedidoID)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("error en commit: %w", err)
 	}
+	log.Printf("[DB] Pedido #%d creado (usuario_id=%d, total=%.2f)", pedidoID, usuarioID, total)
+	return detalle, nil
+}
 
-	log.Printf("[DB] Pedido #%d creado correctamente (total: $%.2f)", pedidoID, total)
-	return &models.Pedido{ID: pedidoID, Total: total, Estado: "confirmado"}, nil
+// selectPedidoDetalleTx lee cabecera + items dentro de la misma tx.
+// Se usa por CreatePedidoConUsuario (tx ya abierta) y por
+// CambiarEstadoPedido para devolver el detalle final.
+func selectPedidoDetalleTx(tx *sql.Tx, pedidoID int) (*models.PedidoDetalle, error) {
+	var d models.PedidoDetalle
+	var usuarioID sql.NullInt64
+	var createdAt time.Time
+	err := tx.QueryRow(
+		`SELECT id, usuario_id, email_usuario, total, metodo_pago, estado, created_at
+		   FROM pedidos WHERE id = $1`,
+		pedidoID,
+	).Scan(&d.ID, &usuarioID, &d.EmailUsuario, &d.Total, &d.MetodoPago, &d.Estado, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrPedidoNoEncontrado
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error leyendo pedido %d: %w", pedidoID, err)
+	}
+	if usuarioID.Valid {
+		v := int(usuarioID.Int64)
+		d.UsuarioID = &v
+	}
+	d.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+
+	rows, err := tx.Query(
+		`SELECT id, producto_id, nombre, precio, cantidad
+		   FROM pedido_items
+		  WHERE pedido_id = $1
+		  ORDER BY id`,
+		pedidoID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error leyendo items del pedido %d: %w", pedidoID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it models.PedidoItem
+		if err := rows.Scan(&it.ID, &it.ProductoID, &it.Nombre, &it.Precio, &it.Cantidad); err != nil {
+			return nil, fmt.Errorf("error escaneando item: %w", err)
+		}
+		d.Items = append(d.Items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// GetMisPedidos devuelve los pedidos del usuario paginados.
+// Orden: más recientes primero (created_at DESC).
+func (r *Repository) GetMisPedidos(usuarioID int, page, limit int) ([]models.PedidoResumen, int, error) {
+	if r.db == nil {
+		return nil, 0, errors.New("base de datos no disponible")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := r.db.Query(
+		`SELECT id, usuario_id, total, estado, created_at,
+		        COUNT(*) OVER() AS total
+		   FROM pedidos
+		  WHERE usuario_id = $1
+		  ORDER BY created_at DESC
+		  LIMIT $2 OFFSET $3`,
+		usuarioID, limit, (page-1)*limit,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error consultando pedidos del usuario %d: %w", usuarioID, err)
+	}
+	defer rows.Close()
+
+	out := []models.PedidoResumen{}
+	var total int
+	for rows.Next() {
+		var p models.PedidoResumen
+		var uid sql.NullInt64
+		var createdAt time.Time
+		if err := rows.Scan(&p.ID, &uid, &p.Total, &p.Estado, &createdAt, &total); err != nil {
+			return nil, 0, fmt.Errorf("error leyendo pedido: %w", err)
+		}
+		if uid.Valid {
+			v := int(uid.Int64)
+			p.UsuarioID = &v
+		}
+		p.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+		out = append(out, p)
+	}
+	return out, total, rows.Err()
+}
+
+// GetPedidosAdmin lista pedidos con filtro opcional de estado. Si
+// filtro.Estado == "" se devuelven todos (sin WHERE extra).
+func (r *Repository) GetPedidosAdmin(f interfaces.PedidoFiltro) ([]models.PedidoResumen, int, error) {
+	if r.db == nil {
+		return nil, 0, errors.New("base de datos no disponible")
+	}
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+	if f.Limit <= 0 {
+		f.Limit = 20
+	}
+	if f.Limit > 100 {
+		f.Limit = 100
+	}
+
+	conds := []string{}
+	args := []interface{}{}
+	if e := strings.TrimSpace(f.Estado); e != "" {
+		args = append(args, e)
+		conds = append(conds, fmt.Sprintf("estado = $%d", len(args)))
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	args = append(args, f.Limit, (f.Page-1)*f.Limit)
+	q := fmt.Sprintf(
+		`SELECT id, usuario_id, total, estado, created_at,
+		        COUNT(*) OVER() AS total
+		   FROM pedidos
+		   %s
+		  ORDER BY created_at DESC
+		  LIMIT $%d OFFSET $%d`,
+		where, len(args)-1, len(args),
+	)
+	rows, err := r.db.Query(q, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error consultando pedidos admin: %w", err)
+	}
+	defer rows.Close()
+
+	out := []models.PedidoResumen{}
+	var total int
+	for rows.Next() {
+		var p models.PedidoResumen
+		var uid sql.NullInt64
+		var createdAt time.Time
+		if err := rows.Scan(&p.ID, &uid, &p.Total, &p.Estado, &createdAt, &total); err != nil {
+			return nil, 0, fmt.Errorf("error leyendo pedido admin: %w", err)
+		}
+		if uid.Valid {
+			v := int(uid.Int64)
+			p.UsuarioID = &v
+		}
+		p.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+		out = append(out, p)
+	}
+	return out, total, rows.Err()
+}
+
+// GetPedidoDetalle devuelve el detalle de un pedido (cabecera + items).
+// Devuelve ErrPedidoNoEncontrado si no existe. La autorización (dueño
+// vs admin) la hace el controller — el repository es agnóstico a la
+// sesión.
+func (r *Repository) GetPedidoDetalle(id int) (*models.PedidoDetalle, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+
+	var d models.PedidoDetalle
+	var usuarioID sql.NullInt64
+	var createdAt time.Time
+	err := r.db.QueryRow(
+		`SELECT id, usuario_id, email_usuario, total, metodo_pago, estado, created_at
+		   FROM pedidos WHERE id = $1`,
+		id,
+	).Scan(&d.ID, &usuarioID, &d.EmailUsuario, &d.Total, &d.MetodoPago, &d.Estado, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrPedidoNoEncontrado
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error consultando pedido %d: %w", id, err)
+	}
+	if usuarioID.Valid {
+		v := int(usuarioID.Int64)
+		d.UsuarioID = &v
+	}
+	d.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+
+	rows, err := r.db.Query(
+		`SELECT id, producto_id, nombre, precio, cantidad
+		   FROM pedido_items
+		  WHERE pedido_id = $1
+		  ORDER BY id`,
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error leyendo items del pedido %d: %w", id, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var it models.PedidoItem
+		if err := rows.Scan(&it.ID, &it.ProductoID, &it.Nombre, &it.Precio, &it.Cantidad); err != nil {
+			return nil, fmt.Errorf("error escaneando item: %w", err)
+		}
+		d.Items = append(d.Items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// CambiarEstadoPedido ejecuta una transacción que:
+//  1. SELECT … FOR UPDATE del pedido (lock pesimista para evitar que
+//     dos admins transicionen a la vez a estados incompatibles).
+//  2. Valida la transición con domain.EsTransicionValida. Si es ilegal,
+//     devuelve domain.ErrTransicionInvalida.
+//  3. UPDATE pedidos SET estado = $nuevo.
+//  4. Si nuevo == cancelado:
+//     - Por cada pedido_item, devuelve stock: UPDATE productos SET
+//       stock = stock + item.cantidad WHERE id = item.producto_id.
+//     - UPDATE comisiones SET estado='revertida' WHERE pedido_id=$id
+//       AND estado IN ('pendiente','aprobada'). Las comisiones ya
+//       'pagadas' NO se tocan (decisión de negocio: una vez pagadas al
+//       MLM, revertir requiere un flujo de clawback fuera de F3).
+//
+// Devuelve models.ErrPedidoNoEncontrado si el id no existe.
+func (r *Repository) CambiarEstadoPedido(id int, nuevoEstado domain.EstadoPedido) error {
+	if r.db == nil {
+		return errors.New("base de datos no disponible")
+	}
+
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("error iniciando transacción: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1) SELECT … FOR UPDATE del pedido.
+	var estadoActual string
+	err = tx.QueryRow(
+		`SELECT estado FROM pedidos WHERE id = $1 FOR UPDATE`,
+		id,
+	).Scan(&estadoActual)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ErrPedidoNoEncontrado
+	}
+	if err != nil {
+		return fmt.Errorf("error leyendo pedido %d: %w", id, err)
+	}
+
+	// 2) Validar FSM.
+	if !domain.EsTransicionValida(domain.EstadoPedido(estadoActual), nuevoEstado) {
+		return fmt.Errorf("%w: %s → %s",
+			domain.ErrTransicionInvalida, estadoActual, nuevoEstado)
+	}
+
+	// 3) UPDATE cabecera.
+	if _, err := tx.Exec(
+		`UPDATE pedidos SET estado = $1 WHERE id = $2`,
+		string(nuevoEstado), id,
+	); err != nil {
+		return fmt.Errorf("error actualizando estado del pedido %d: %w", id, err)
+	}
+
+	// 4) Side-effects al cancelar.
+	if nuevoEstado == domain.EstadoCancelado {
+		// 4a) Devolver stock de cada item al producto.
+		if _, err := tx.Exec(
+			`UPDATE productos p
+			    SET stock = p.stock + pi.cantidad
+			   FROM pedido_items pi
+			  WHERE pi.pedido_id = $1
+			    AND pi.producto_id = p.id`,
+			id,
+		); err != nil {
+			return fmt.Errorf("error devolviendo stock al cancelar pedido %d: %w", id, err)
+		}
+		// 4b) Revertir comisiones pendientes/aprobadas. Pagadas no se tocan.
+		if _, err := tx.Exec(
+			`UPDATE comisiones
+			    SET estado = 'revertida'
+			  WHERE pedido_id = $1
+			    AND estado IN ('pendiente','aprobada')`,
+			id,
+		); err != nil {
+			return fmt.Errorf("error revirtiendo comisiones del pedido %d: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error en commit: %w", err)
+	}
+	log.Printf("[DB] Pedido #%d → %s", id, nuevoEstado)
+	return nil
 }
 
 // ─────────────────────────── Comisiones (F1 — upline walk real) ───────────────────────────
@@ -525,13 +870,13 @@ func (r *Repository) ProcessCheckout(req models.CheckoutRequest) (*models.Pedido
 //
 // Notas sobre el modelo:
 //
-//   - pedido_id queda NULL por ahora: el checkout actual no propaga el id
-//     de pedido al callback asíncrono. En F4 se cambiará la firma para
-//     recibirlo y enlazar la comisión a su pedido origen.
+//   - pedidoID es el id del pedido recién creado por CreatePedidoConUsuario.
+//     F3 enlaza la comisión al pedido para que CambiarEstadoPedido pueda
+//     revertirla al cancelar (UPDATE … WHERE pedido_id = $1).
 //   - La operación se hace best-effort: si cualquier nivel falla (por
 //     ejemplo FK constraint al cerrar la conexión), se loguea y se
 //     abandona sin afectar la respuesta HTTP al cliente.
-func (r *Repository) ActualizarComisiones(total float64, emailUsuario string) {
+func (r *Repository) ActualizarComisiones(pedidoID int, total float64, emailUsuario string) {
 	if r.db == nil {
 		log.Printf("[Goroutine] DB no disponible, comisiones no actualizadas")
 		return
@@ -564,19 +909,21 @@ func (r *Repository) ActualizarComisiones(total float64, emailUsuario string) {
 		current = int(parentID.Int64)
 
 		comision := total * pct
-		// pedido_id NULL intencionalmente en F1 (ver doc-comment arriba).
+		// F3: pedido_id ya NO es NULL — se enlaza con el pedido recién
+		// creado para poder revertir al cancelar.
 		_, err = r.db.Exec(
 			`INSERT INTO comisiones
 			   (nivel, monto, origen_email, pedido_id, referido_id, porcentaje, estado)
-			 VALUES ($1, $2, $3, NULL, $4, $5, 'pendiente')`,
-			nivel+1, comision, emailUsuario, current, pct*100,
+			 VALUES ($1, $2, $3, $4, $5, $6, 'pendiente')`,
+			nivel+1, comision, emailUsuario, pedidoID, current, pct*100,
 		)
 		if err != nil {
 			log.Printf("[Comision] error nivel %d: %v", nivel+1, err)
 			return
 		}
 	}
-	log.Printf("[Comision] upline walk completado para %s (total=%.2f)", emailUsuario, total)
+	log.Printf("[Comision] upline walk completado para %s (pedido=%d, total=%.2f)",
+		emailUsuario, pedidoID, total)
 }
 
 // isUniqueViolation devuelve true si err es una violación de unicidad de

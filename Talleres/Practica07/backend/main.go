@@ -47,6 +47,7 @@ func main() {
 		Producto: controllers.NewProductoController(repo, cache),
 		Network:  controllers.NewNetworkController(repo, cache),
 		Checkout: controllers.NewCheckoutController(repo, cache),
+		Pedidos:  controllers.NewPedidosController(repo, cache),
 	}
 
 	// 5) App + middlewares globales.
