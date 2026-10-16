@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, type FormEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
@@ -8,15 +8,22 @@ const Login = () => {
     const [error, setError] = useState<string>('');
 
     const navigate = useNavigate();
-    const { login, isLoading } = useAuth();
+    const { login, isLoading, isAuthenticated, rol } = useAuth();
+
+    // Si ya está autenticado, redirigir según su rol
+    useEffect(() => {
+        if (isAuthenticated) {
+            navigate(rol === 'admin' ? '/' : '/catalogo', { replace: true });
+        }
+    }, [isAuthenticated, rol, navigate]);
 
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError('');
 
         try {
-            await login(email, password);
-            navigate('/');
+            const data = await login(email, password);
+            navigate(data.rol === 'admin' ? '/' : '/catalogo', { replace: true });
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Error al iniciar sesión');
         }
@@ -73,6 +80,12 @@ hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                         {isLoading ? 'Iniciando...' : 'Iniciar Sesión'}
                     </button>
                 </form>
+                <p className="text-center text-sm text-slate-600 mt-4">
+                    ¿No tienes cuenta?{' '}
+                    <Link to="/registro" className="text-slate-900 font-semibold hover:underline">
+                        Crear cuenta
+                    </Link>
+                </p>
             </div>
         </div>
     );

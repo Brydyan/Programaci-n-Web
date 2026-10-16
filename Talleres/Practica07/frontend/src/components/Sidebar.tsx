@@ -3,9 +3,26 @@ import { MdOutlineDashboard } from "react-icons/md";
 import { GrCatalog } from "react-icons/gr";
 import { FaNetworkWired } from "react-icons/fa";
 import { useSidebar } from "../context/SidebarContext";
+import { useAuth } from "../context/AuthContext";
+
+type Item = {
+    to: string;
+    label: string;
+    Icon: React.ComponentType<{ className?: string }>;
+    roles: Array<"admin" | "cliente">;
+};
+
+const items: Item[] = [
+    { to: "/",           label: "Dashboard", Icon: MdOutlineDashboard, roles: ["admin"] },
+    { to: "/catalogo",   label: "Catálogo",  Icon: GrCatalog,          roles: ["admin", "cliente"] },
+    { to: "/mi-red",     label: "Mi Red",    Icon: FaNetworkWired,     roles: ["admin"] },
+];
 
 const Sidebar = () => {
     const { isCollapsed } = useSidebar();
+    const { rol } = useAuth();
+
+    const visible = items.filter((it) => !rol || it.roles.includes(rol));
 
     return (
         <aside
@@ -21,31 +38,30 @@ const Sidebar = () => {
                 {isCollapsed ? "MC" : "MultiCatálogo"}
             </div>
             <nav className="flex-1 p-2 md:p-4 space-y-1 md:space-y-2">
-                <Link
-                    to="/"
-                    className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
-                    title={isCollapsed ? "Dashboard" : ""}
-                >
-                    <MdOutlineDashboard className="text-lg md:text-xl flex-shrink-0" />
-                    {!isCollapsed && <span className="whitespace-nowrap">Dashboard</span>}
-                </Link>
-                <Link
-                    to="/catalogo"
-                    className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
-                    title={isCollapsed ? "Catálogo" : ""}
-                >
-                    <GrCatalog className="text-lg md:text-xl flex-shrink-0" />
-                    {!isCollapsed && <span className="whitespace-nowrap">Catálogo</span>}
-                </Link>
-                <Link
-                    to="/mi-red"
-                    className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
-                    title={isCollapsed ? "Mi Red" : ""}
-                >
-                    <FaNetworkWired className="text-lg md:text-xl flex-shrink-0" />
-                    {!isCollapsed && <span className="whitespace-nowrap">Mi Red</span>}
-                </Link>
+                {visible.length === 0 && (
+                    <div className="text-slate-200 text-sm px-2 py-3 opacity-75">
+                        {isCollapsed ? "…" : "Sin menús disponibles"}
+                    </div>
+                )}
+                {visible.map(({ to, label, Icon }) => (
+                    <Link
+                        key={to}
+                        to={to}
+                        className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
+                        title={isCollapsed ? label : ""}
+                    >
+                        <Icon className="text-lg md:text-xl flex-shrink-0" />
+                        {!isCollapsed && (
+                            <span className="whitespace-nowrap">{label}</span>
+                        )}
+                    </Link>
+                ))}
             </nav>
+            {!isCollapsed && (
+                <div className="p-4 border-t border-slate-700 text-xs text-slate-200 opacity-70">
+                    {rol === "admin" ? "Modo administrador" : "Modo cliente"}
+                </div>
+            )}
         </aside>
     );
 };

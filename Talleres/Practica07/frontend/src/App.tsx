@@ -5,12 +5,14 @@ import Catalogo from './components/Catalogo';
 import MiRed from './components/MiRed';
 import Carrito from './components/Carrito';
 import Login from './components/Login';
+import Registro from './components/Registro';
 import DetalleProducto from './components/DetalleProducto';
 import Checkout from './components/Checkout';
 import Confirmacion from './components/Confirmacion';
 import { CartProvider } from './context/CartContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SidebarProvider } from './context/SidebarContext';
+import { AdminRoute } from './components/AdminRoute';
 
 // Componente para proteger las rutas privadas
 const ProtectedRoute = () => {
@@ -33,17 +35,24 @@ function App() {
           <Routes>
             {/* Ruta pública */}
             <Route path="/login" element={<Login />} />
-            {/* Rutas protegidas */}
+            <Route path="/registro" element={<Registro />} />
+            {/* Rutas protegidas (cualquier usuario autenticado) */}
             <Route element={<ProtectedRoute />}>
               <Route path="/" element={<Layout />}>
-                <Route index element={<Dashboard />} />
                 <Route path="catalogo" element={<Catalogo />} />
-                <Route path="mi-red" element={<MiRed />} />
                 <Route path="carrito" element={<Carrito />} />
                 <Route path="producto/:id" element={<DetalleProducto />} />
                 <Route path="productos/:id" element={<DetalleProducto />} />
                 <Route path="checkout" element={<Checkout />} />
                 <Route path="confirmacion" element={<Confirmacion />} />
+              </Route>
+            </Route>
+
+            {/* Rutas solo admin */}
+            <Route element={<AdminRoute />}>
+              <Route path="/" element={<Layout />}>
+                <Route index element={<Dashboard />} />
+                <Route path="mi-red" element={<MiRed />} />
               </Route>
             </Route>
 
