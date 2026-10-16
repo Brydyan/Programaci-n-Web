@@ -12,27 +12,23 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"multicatalogo-backend/domain"
+	"multicatalogo-backend/internal/dto"
+	"multicatalogo-backend/interfaces"
 	"multicatalogo-backend/models"
 )
 
 // Repository implementa interfaces.DBRepository.
-// Usa datos mock en memoria para productos/red (a sustituir en F2) y
-// PostgreSQL real para auth, checkout y comisiones (sprint F1).
+// Sprint F2: el catálogo de productos sale del slice en memoria y pasa a
+// PostgreSQL (tabla `productos`). La red sigue siendo mock hasta que otro
+// sprint la migre.
 type Repository struct {
-	db        *sql.DB
-	productos []models.Producto
-	red       []models.Referido
+	db  *sql.DB
+	red []models.Referido
 }
 
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{
 		db: db,
-		productos: []models.Producto{
-			{ID: 1, Nombre: "Serum Revitalizante", Precio: 45.00, Img: "https://picsum.photos/seed/serum/150"},
-			{ID: 2, Nombre: "Crema Hidratante Pro", Precio: 32.50, Img: "https://picsum.photos/seed/crema/150"},
-			{ID: 3, Nombre: "Tónico Purificante", Precio: 28.00, Img: "https://picsum.photos/seed/tonico/150"},
-			{ID: 4, Nombre: "Mascarilla Nocturna", Precio: 50.00, Img: "https://picsum.photos/seed/mascarilla/150"},
-		},
 		red: []models.Referido{
 			{ID: 1, Codigo: "MOCK01"},
 			{ID: 2, Codigo: "MOCK02"},
@@ -219,19 +215,248 @@ func (r *Repository) GetUsuarioByCodigoRef(codigo string) (*models.Referido, err
 	return &ref, nil
 }
 
-// ─────────────────────────── Catálogo / Red (mock) ───────────────────────────
+// ─────────────────────────── Catálogo / Red ───────────────────────────
+//
+// La red no se ha migrado todavía (queda como slice en memoria para no
+// romper F3). El catálogo ya vive en PostgreSQL.
 
-func (r *Repository) GetAllProducts() []models.Producto {
-	return r.productos
+// GetAllProductos devuelve todos los productos activo=true ordenados
+// por nombre. Es el método que usa el catálogo público; el admin usa
+// GetProductosAdmin (que no filtra por activo y soporta paginación).
+func (r *Repository) GetAllProductos() ([]models.Producto, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	rows, err := r.db.Query(
+		`SELECT id, nombre, precio, categoria, stock, img, activo
+		   FROM productos
+		  WHERE activo = true
+		  ORDER BY nombre`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando productos: %w", err)
+	}
+	defer rows.Close()
+
+	out := []models.Producto{}
+	for rows.Next() {
+		var p models.Producto
+		if err := rows.Scan(&p.ID, &p.Nombre, &p.Precio, &p.Categoria, &p.Stock, &p.Img, &p.Activo); err != nil {
+			return nil, fmt.Errorf("error leyendo fila de producto: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
-func (r *Repository) GetProductByID(id int) (*models.Producto, error) {
-	for _, p := range r.productos {
-		if p.ID == id {
-			return &p, nil
-		}
+// GetProductoByID devuelve el producto sea activo o no (404 si no
+// existe la fila). El controller público ya filtra activo si quiere,
+// pero exponerlo permite que admin consulte inactivos.
+func (r *Repository) GetProductoByID(id int) (*models.Producto, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
 	}
-	return nil, errors.New("producto no encontrado")
+	var p models.Producto
+	err := r.db.QueryRow(
+		`SELECT id, nombre, precio, categoria, stock, img, activo
+		   FROM productos WHERE id = $1`,
+		id,
+	).Scan(&p.ID, &p.Nombre, &p.Precio, &p.Categoria, &p.Stock, &p.Img, &p.Activo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrProductoNoEncontrado
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error consultando producto %d: %w", id, err)
+	}
+	return &p, nil
+}
+
+// GetProductosAdmin implementa GET /api/admin/productos con búsqueda
+// opcional y paginación. El total se obtiene vía COUNT(*) OVER() para
+// evitar una segunda consulta. Normaliza page/limit a defaults seguros
+// (page=1, limit=20, limit cap=100) — el controller ya valida pero lo
+// hacemos aquí también como defensa en profundidad.
+//
+// Query-params soportados:
+//
+//	q       — substring a buscar (ILIKE sobre nombre y categoria)
+//	activo  — true/false (nil = todos)
+//	page    — 1-based; default 1
+//	limit   — 1..100; default 20
+func (r *Repository) GetProductosAdmin(f interfaces.ProductoFiltro) ([]models.Producto, int, error) {
+	if r.db == nil {
+		return nil, 0, errors.New("base de datos no disponible")
+	}
+
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+	if f.Limit <= 0 {
+		f.Limit = 20
+	}
+	if f.Limit > 100 {
+		f.Limit = 100
+	}
+
+	conds := []string{}
+	args := []interface{}{}
+	if q := strings.TrimSpace(f.Q); q != "" {
+		args = append(args, "%"+q+"%")
+		conds = append(conds, fmt.Sprintf("(nombre ILIKE $%d OR categoria ILIKE $%d)", len(args), len(args)))
+	}
+	if f.Activo != nil {
+		args = append(args, *f.Activo)
+		conds = append(conds, fmt.Sprintf("activo = $%d", len(args)))
+	}
+
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	args = append(args, f.Limit, (f.Page-1)*f.Limit)
+	query := fmt.Sprintf(
+		`SELECT id, nombre, precio, categoria, stock, img, activo,
+		        COUNT(*) OVER() AS total
+		   FROM productos
+		   %s
+		  ORDER BY nombre
+		  LIMIT $%d OFFSET $%d`,
+		where, len(args)-1, len(args),
+	)
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error consultando productos admin: %w", err)
+	}
+	defer rows.Close()
+
+	out := []models.Producto{}
+	var total int
+	for rows.Next() {
+		var p models.Producto
+		if err := rows.Scan(&p.ID, &p.Nombre, &p.Precio, &p.Categoria, &p.Stock, &p.Img, &p.Activo, &total); err != nil {
+			return nil, 0, fmt.Errorf("error leyendo fila admin: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, total, rows.Err()
+}
+
+// CreateProducto inserta un producto nuevo y devuelve la fila completa
+// con id asignado y activo=true por defecto. El stock negativo o el
+// precio negativo se rechazan en el CHECK de la tabla (precio/stock>=0).
+func (r *Repository) CreateProducto(d dto.ProductoCreate) (*models.Producto, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+
+	var p models.Producto
+	err := r.db.QueryRow(
+		`INSERT INTO productos (nombre, precio, categoria, stock, img, activo)
+		 VALUES ($1, $2, $3, $4, $5, true)
+		 RETURNING id, nombre, precio, categoria, stock, img, activo`,
+		d.Nombre, d.Precio, d.Categoria, d.Stock, d.Img,
+	).Scan(&p.ID, &p.Nombre, &p.Precio, &p.Categoria, &p.Stock, &p.Img, &p.Activo)
+	if err != nil {
+		return nil, fmt.Errorf("error insertando producto: %w", err)
+	}
+	return &p, nil
+}
+
+// UpdateProducto aplica un PUT parcial con COALESCE: sólo los campos
+// enviados se actualizan. Stock y Activo son *punteros* en el DTO, lo
+// que permite distinguir "0/false explícito" de "no enviado". Para
+// los strings, vacío == no enviado (la validación del DTO rechaza
+// nombre de 1 char o vacío antes de llegar aquí).
+func (r *Repository) UpdateProducto(id int, d dto.ProductoUpdate) (*models.Producto, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+
+	// Construir NullTyers: nil/no-enviado -> SQL NULL -> COALESCE conserva
+	// el valor actual; valor enviado -> COALESCE lo escribe.
+	var (
+		nombre    sql.NullString
+		precio    sql.NullFloat64
+		categoria sql.NullString
+		stock     sql.NullInt64
+		img       sql.NullString
+		activo    sql.NullBool
+	)
+	if d.Nombre != "" {
+		nombre = sql.NullString{String: d.Nombre, Valid: true}
+	}
+	if d.Precio != 0 {
+		precio = sql.NullFloat64{Float64: d.Precio, Valid: true}
+	}
+	if d.Categoria != "" {
+		categoria = sql.NullString{String: d.Categoria, Valid: true}
+	}
+	if d.Stock != nil {
+		stock = sql.NullInt64{Int64: int64(*d.Stock), Valid: true}
+	}
+	if d.Img != "" {
+		img = sql.NullString{String: d.Img, Valid: true}
+	}
+	if d.Activo != nil {
+		activo = sql.NullBool{Bool: *d.Activo, Valid: true}
+	}
+
+	var p models.Producto
+	err := r.db.QueryRow(
+		`UPDATE productos SET
+		    nombre    = COALESCE($1, nombre),
+		    precio    = COALESCE($2, precio),
+		    categoria = COALESCE($3, categoria),
+		    stock     = COALESCE($4, stock),
+		    img       = COALESCE($5, img),
+		    activo    = COALESCE($6, activo)
+		 WHERE id = $7
+		 RETURNING id, nombre, precio, categoria, stock, img, activo`,
+		nombre, precio, categoria, stock, img, activo, id,
+	).Scan(&p.ID, &p.Nombre, &p.Precio, &p.Categoria, &p.Stock, &p.Img, &p.Activo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrProductoNoEncontrado
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error actualizando producto %d: %w", id, err)
+	}
+	return &p, nil
+}
+
+// SoftDeleteProducto marca activo=false sin eliminar la fila (preserva
+// FK desde pedido_items y mantiene histórico de auditoría). Si el
+// producto ya estaba inactivo, la operación es idempotente (no error).
+// Si no existe, devuelve ErrProductoNoEncontrado.
+func (r *Repository) SoftDeleteProducto(id int) error {
+	if r.db == nil {
+		return errors.New("base de datos no disponible")
+	}
+
+	res, err := r.db.Exec(
+		`UPDATE productos SET activo = false
+		 WHERE id = $1 AND activo = true`,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("error desactivando producto %d: %w", id, err)
+	}
+	n, _ := res.RowsAffected()
+	if n > 0 {
+		return nil // desactivado en este momento
+	}
+
+	// 0 filas afectadas: o no existe, o ya estaba inactivo.
+	var exists bool
+	if err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM productos WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("error verificando existencia: %w", err)
+	}
+	if !exists {
+		return models.ErrProductoNoEncontrado
+	}
+	// ya estaba inactivo: idempotente
+	return nil
 }
 
 func (r *Repository) GetNetwork() []models.Referido {

@@ -20,12 +20,16 @@ type APIError struct {
 //	                            no permitir enumeración de correos)
 //	ErrEmailDuplicado        → 409 CONFLICT
 //	ErrCodigoRefInvalido     → 400 VALIDATION_ERROR
+//	ErrProductoNoEncontrado  → 404 NOT_FOUND
+//	ErrProductoDuplicado     → 409 CONFLICT (nombre duplicado; opcional F2)
 var (
 	ErrCredencialesInvalidas = errors.New("credenciales inválidas")
 	ErrCuentaDesactivada     = errors.New("cuenta desactivada")
 	ErrUsuarioNoEncontrado   = errors.New("usuario no encontrado")
 	ErrEmailDuplicado        = errors.New("email ya registrado")
 	ErrCodigoRefInvalido     = errors.New("código de referido inválido")
+	ErrProductoNoEncontrado   = errors.New("producto no encontrado")
+	ErrProductoDuplicado     = errors.New("producto ya existe")
 )
 
 // LoginRequest define la estructura esperada para el cuerpo de la petición (JSON) al iniciar sesión.
@@ -37,6 +41,10 @@ type LoginRequest struct {
 }
 
 // Producto define la estructura de los datos de un artículo en nuestro catálogo.
+// Migrado a DB real en F2: ahora refleja las columnas de la tabla `productos`
+// (incluye categoria/stock/activo). Las versiones previas del FE que sólo
+// consumían id/nombre/precio/img siguen funcionando porque los nuevos campos
+// son zero-valued si la consulta no los devuelve.
 type Producto struct {
 	// ID es el identificador único numérico del producto.
 	ID int `json:"id"`
@@ -44,8 +52,15 @@ type Producto struct {
 	Nombre string `json:"nombre"`
 	// Precio es el costo del producto, almacenado como un número con decimales (float64).
 	Precio float64 `json:"precio"`
+	// Categoria agrupa el producto (rostro, tratamiento, etc.).
+	Categoria string `json:"categoria"`
+	// Stock disponible — los admin lo gestionan, la vista pública lo lee.
+	Stock int `json:"stock"`
 	// Img es la URL o ruta que apunta a la fotografía o imagen del producto.
 	Img string `json:"img"`
+	// Activo controla la presencia en el catálogo público. Los admin pueden
+	// desactivarlo para mantener el histórico de pedidos sin exponerlo.
+	Activo bool `json:"activo"`
 }
 
 // Referido define la estructura de un nodo del árbol multinivel.

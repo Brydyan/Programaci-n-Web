@@ -55,4 +55,17 @@ func SetupRoutes(app *fiber.App, ctrl Controllers, jwtSecret []byte) {
 		middleware.RateLimit(10, time.Minute),
 		ctrl.Auth.Register, // placeholder F1: devuelve 501
 	)
+
+	// Rutas admin (F2): requieren JWT válido (RequireAuth) y rol=admin
+	// (RequireAdmin). El orden es importante — RequireAdmin lee
+	// c.Locals(LocalUserKey) que RequireAuth pobla. Cualquier ruta admin
+	// futura debe añadirse aquí.
+	admin := app.Group("/api/admin",
+		middleware.RequireAuth(jwtSecret),
+		middleware.RequireAdmin(),
+	)
+	admin.Get("/productos", ctrl.Producto.AdminList)
+	admin.Post("/productos", ctrl.Producto.AdminCreate)
+	admin.Put("/productos/:id", ctrl.Producto.AdminUpdate)
+	admin.Delete("/productos/:id", ctrl.Producto.AdminDelete)
 }

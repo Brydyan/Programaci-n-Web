@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
 	"multicatalogo-backend/config"
@@ -507,10 +509,17 @@ func TestRegisterRateLimit(t *testing.T) {
 
 // ─────────────────────────── Productos / Red / Checkout (mock-based) ───────────────────────────
 
+// TestProductos ejercita la vista pública contra la DB real (F2 migró el
+// catálogo del mock a PostgreSQL). Truncamos la tabla `productos` en cada
+// sub-test para empezar con estado conocido y luego insertamos 4 seeds.
 func TestProductos(t *testing.T) {
-	app := setupTestApp()
+	app, db := setupTestDB(t)
+	defer db.Close()
 
 	t.Run("Get all products", func(t *testing.T) {
+		resetProductos(t, db)
+		seedProductos(t, db)
+
 		req := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
 		resp, _ := app.Test(req)
 		if resp.StatusCode != http.StatusOK {
@@ -521,6 +530,13 @@ func TestProductos(t *testing.T) {
 		_ = json.Unmarshal(body, &prods)
 		if len(prods) != 4 {
 			t.Errorf("expected 4 products, got %d", len(prods))
+		}
+		// El listado público sólo incluye activo=true. Si los seeds están
+		// inactivos no aparecerían — los sembramos con activo=true.
+		for _, p := range prods {
+			if !p.Activo {
+				t.Errorf("public list should not include inactive products, got %+v", p)
+			}
 		}
 	})
 
@@ -533,13 +549,13 @@ func TestProductos(t *testing.T) {
 		var ae apiErr
 		body, _ := io.ReadAll(resp.Body)
 		_ = json.Unmarshal(body, &ae)
-		if ae.Status != 400 || ae.Message != "El ID del producto debe ser un número entero" {
+		if ae.Status != 400 || ae.Code != "VALIDATION_ERROR" || ae.Message != "id inválido" {
 			t.Errorf("unexpected error: %+v", ae)
 		}
 	})
 
 	t.Run("Get product by ID - not found", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/productos/999", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/productos/9999", nil)
 		resp, _ := app.Test(req)
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", resp.StatusCode)
@@ -547,12 +563,15 @@ func TestProductos(t *testing.T) {
 		var ae apiErr
 		body, _ := io.ReadAll(resp.Body)
 		_ = json.Unmarshal(body, &ae)
-		if ae.Status != 404 || ae.Message != "Producto no encontrado" {
+		if ae.Status != 404 || ae.Code != "NOT_FOUND" || ae.Message != "producto no encontrado" {
 			t.Errorf("unexpected error: %+v", ae)
 		}
 	})
 
 	t.Run("Get product by ID - found", func(t *testing.T) {
+		resetProductos(t, db)
+		seedProductos(t, db)
+
 		req := httptest.NewRequest(http.MethodGet, "/api/productos/1", nil)
 		resp, _ := app.Test(req)
 		if resp.StatusCode != http.StatusOK {
@@ -567,6 +586,9 @@ func TestProductos(t *testing.T) {
 	})
 
 	t.Run("Get product by alias route /api/producto/:id", func(t *testing.T) {
+		resetProductos(t, db)
+		seedProductos(t, db)
+
 		req := httptest.NewRequest(http.MethodGet, "/api/producto/2", nil)
 		resp, _ := app.Test(req)
 		if resp.StatusCode != http.StatusOK {
@@ -577,6 +599,36 @@ func TestProductos(t *testing.T) {
 		_ = json.Unmarshal(body, &prod)
 		if prod.ID != 2 || prod.Nombre != "Crema Hidratante Pro" {
 			t.Errorf("unexpected product: %+v", prod)
+		}
+	})
+
+	t.Run("Inactive products excluded from public list", func(t *testing.T) {
+		resetProductos(t, db)
+		// Insertamos 2 productos, uno activo y otro no.
+		_, err := db.Exec(`INSERT INTO productos (nombre, precio, categoria, stock, img, activo) VALUES ($1,$2,$3,$4,$5,$6)`,
+			"Visible", 10.00, "rostro", 5, "https://example.com/v.jpg", true)
+		if err != nil {
+			t.Fatalf("seed activo: %v", err)
+		}
+		_, err = db.Exec(`INSERT INTO productos (nombre, precio, categoria, stock, img, activo) VALUES ($1,$2,$3,$4,$5,$6)`,
+			"Oculto", 20.00, "rostro", 5, "https://example.com/o.jpg", false)
+		if err != nil {
+			t.Fatalf("seed inactivo: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		var prods []models.Producto
+		body, _ := io.ReadAll(resp.Body)
+		_ = json.Unmarshal(body, &prods)
+		if len(prods) != 1 {
+			t.Errorf("expected 1 product (only activo=true), got %d", len(prods))
+		}
+		if len(prods) > 0 && prods[0].Nombre != "Visible" {
+			t.Errorf("unexpected product in list: %+v", prods[0])
 		}
 	})
 }
@@ -629,6 +681,565 @@ func TestCheckout(t *testing.T) {
 	})
 }
 
+// ─────────────────────────── Productos admin (F2) ───────────────────────────
+//
+// Las pruebas siguientes ejercitan /api/admin/productos, que está protegida
+// por RequireAuth + RequireAdmin. Firma manual con middleware.SignJWT para
+// evitar acoplar al endpoint /api/login (probado en TestLogin).
+//
+// Patrón:
+//
+//	1. resetProductos() — vacía la tabla `productos`.
+//	2. seedProductos()  — inserta 4 filas conocidas (coinciden con 005_seed).
+//	3. Petición HTTP con Authorization: Bearer <jwt admin>.
+
+// adminAuthHeader devuelve el header Authorization con un JWT de admin
+// firmado con el secret de tests. El rol y email son los del seed
+// admin@upse.edu.ec creado por ensureSeed.
+func adminAuthHeader(t *testing.T) string {
+	t.Helper()
+	tok, err := middleware.SignJWT(testJWTSecret, middleware.JWTClaims{
+		Sub:   1,
+		Email: "admin@upse.edu.ec",
+		Rol:   "admin",
+		Exp:   time.Now().Add(1 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("SignJWT admin: %v", err)
+	}
+	return "Bearer " + tok
+}
+
+// clientAuthHeader devuelve el header Authorization con un JWT de cliente
+// (rol=cliente). Útil para probar que /api/admin/* rechaza no-admins.
+func clientAuthHeader(t *testing.T) string {
+	t.Helper()
+	tok, err := middleware.SignJWT(testJWTSecret, middleware.JWTClaims{
+		Sub:   2,
+		Email: "cliente@upse.edu.ec",
+		Rol:   "cliente",
+		Exp:   time.Now().Add(1 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("SignJWT cliente: %v", err)
+	}
+	return "Bearer " + tok
+}
+
+func TestAdminCreate(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	body := `{"nombre":"Nuevo Sérum","precio":99.99,"categoria":"rostro","stock":10,"img":"https://example.com/x.jpg"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", adminAuthHeader(t))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var prod models.Producto
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBody, &prod)
+	if prod.ID == 0 {
+		t.Errorf("expected non-zero id, got 0")
+	}
+	if prod.Nombre != "Nuevo Sérum" {
+		t.Errorf("unexpected nombre: %q", prod.Nombre)
+	}
+	if !prod.Activo {
+		t.Errorf("expected activo=true on creation, got false")
+	}
+
+	// GET público debe devolverlo (la creación invalida el caché).
+	getReq := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
+	getResp, _ := app.Test(getReq)
+	var list []models.Producto
+	listBody, _ := io.ReadAll(getResp.Body)
+	_ = json.Unmarshal(listBody, &list)
+	found := false
+	for _, p := range list {
+		if p.ID == prod.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("created product %d not present in public list", prod.ID)
+	}
+}
+
+func TestAdminCreateForbidden(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	body := `{"nombre":"X","precio":10,"categoria":"rostro","stock":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", clientAuthHeader(t)) // rol=cliente
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", resp.StatusCode)
+	}
+	var ae apiErr
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBody, &ae)
+	if ae.Code != "FORBIDDEN" {
+		t.Errorf("expected FORBIDDEN, got %q", ae.Code)
+	}
+}
+
+func TestAdminCreateNoAuth(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/productos",
+		strings.NewReader(`{"nombre":"X","precio":10,"categoria":"rostro","stock":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	// sin Authorization
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestAdminCreateValidation(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"missing nombre", `{"precio":10,"categoria":"rostro","stock":1}`},
+		{"empty precio", `{"nombre":"X","categoria":"rostro","stock":1}`},
+		{"negative precio", `{"nombre":"X","precio":-5,"categoria":"rostro","stock":1}`},
+		{"missing categoria", `{"nombre":"X","precio":10,"stock":1}`},
+		{"negative stock", `{"nombre":"X","precio":10,"categoria":"rostro","stock":-1}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", adminAuthHeader(t))
+			resp, _ := app.Test(req)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d", resp.StatusCode)
+			}
+			var ae apiErr
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = json.Unmarshal(respBody, &ae)
+			if ae.Code != "VALIDATION_ERROR" {
+				t.Errorf("expected VALIDATION_ERROR, got %q", ae.Code)
+			}
+		})
+	}
+}
+
+func TestAdminUpdate(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	// PUT parcial: sólo cambiamos precio y stock.
+	body := `{"precio":99.99,"stock":42}`
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/productos/1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", adminAuthHeader(t))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var prod models.Producto
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBody, &prod)
+	if prod.Precio != 99.99 {
+		t.Errorf("expected precio 99.99, got %v", prod.Precio)
+	}
+	if prod.Stock != 42 {
+		t.Errorf("expected stock 42, got %d", prod.Stock)
+	}
+	// campos no enviados deben quedar igual
+	if prod.Nombre != "Serum Revitalizante" {
+		t.Errorf("nombre should not change, got %q", prod.Nombre)
+	}
+	if prod.Categoria != "rostro" {
+		t.Errorf("categoria should not change, got %q", prod.Categoria)
+	}
+
+	// PUT a id inexistente → 404
+	req2 := httptest.NewRequest(http.MethodPut, "/api/admin/productos/9999",
+		strings.NewReader(`{"precio":1}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", adminAuthHeader(t))
+	resp2, _ := app.Test(req2)
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 on missing id, got %d", resp2.StatusCode)
+	}
+}
+
+func TestAdminSoftDelete(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	// Insertar un pedido + pedido_item referenciando producto 1 para
+	// verificar que el soft-delete preserva la FK.
+	var pedidoID int
+	if err := db.QueryRow(
+		`INSERT INTO pedidos (email_usuario, total, metodo_pago, estado) VALUES ($1,$2,$3,'pendiente') RETURNING id`,
+		"fakeperson@upse.edu.ec", 45.00, "tarjeta",
+	).Scan(&pedidoID); err != nil {
+		t.Fatalf("seed pedido: %v", err)
+	}
+	var itemID int
+	if err := db.QueryRow(
+		`INSERT INTO pedido_items (pedido_id, producto_id, nombre, precio, cantidad) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		pedidoID, 1, "Serum Revitalizante", 45.00, 1,
+	).Scan(&itemID); err != nil {
+		t.Fatalf("seed pedido_item: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/1", nil)
+	req.Header.Set("Authorization", adminAuthHeader(t))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// El producto en DB debe seguir existiendo pero con activo=false.
+	var activo bool
+	if err := db.QueryRow(`SELECT activo FROM productos WHERE id = 1`).Scan(&activo); err != nil {
+		t.Fatalf("query producto: %v", err)
+	}
+	if activo {
+		t.Errorf("expected activo=false after soft-delete, got true")
+	}
+
+	// GET público lo debe excluir.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
+	getResp, _ := app.Test(getReq)
+	var list []models.Producto
+	listBody, _ := io.ReadAll(getResp.Body)
+	_ = json.Unmarshal(listBody, &list)
+	for _, p := range list {
+		if p.ID == 1 {
+			t.Errorf("soft-deleted product still in public list: %+v", p)
+		}
+	}
+
+	// El pedido_item sigue intacto (FK preservada).
+	var itemExists bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pedido_items WHERE id = $1)`, itemID).Scan(&itemExists); err != nil {
+		t.Fatalf("query pedido_item: %v", err)
+	}
+	if !itemExists {
+		t.Errorf("pedido_item was deleted (should be preserved by soft-delete)")
+	}
+
+	// Soft-delete idempotente: borrar dos veces no debe fallar.
+	req2 := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/1", nil)
+	req2.Header.Set("Authorization", adminAuthHeader(t))
+	resp2, _ := app.Test(req2)
+	if resp2.StatusCode != http.StatusNoContent {
+		t.Errorf("second DELETE should be idempotent (204), got %d", resp2.StatusCode)
+	}
+
+	// Soft-delete de id inexistente → 404.
+	req3 := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/9999", nil)
+	req3.Header.Set("Authorization", adminAuthHeader(t))
+	resp3, _ := app.Test(req3)
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 on missing id, got %d", resp3.StatusCode)
+	}
+}
+
+func TestAdminListPagination(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	// Insertar 5 productos manualmente.
+	for i := 1; i <= 5; i++ {
+		_, err := db.Exec(
+			`INSERT INTO productos (nombre, precio, categoria, stock, img, activo) VALUES ($1,$2,$3,$4,$5,true)`,
+			fmt.Sprintf("Producto %02d", i), float64(i), "rostro", i, "https://example.com/"+strconv.Itoa(i),
+		)
+		if err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	// ?page=2&limit=2 debe devolver productos 3 y 4.
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/productos?page=2&limit=2", nil)
+	req.Header.Set("Authorization", adminAuthHeader(t))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var res struct {
+		Data  []models.Producto `json:"data"`
+		Page  int               `json:"page"`
+		Limit int               `json:"limit"`
+		Total int               `json:"total"`
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBody, &res)
+	if res.Page != 2 || res.Limit != 2 || res.Total != 5 {
+		t.Errorf("unexpected meta: page=%d limit=%d total=%d", res.Page, res.Limit, res.Total)
+	}
+	if len(res.Data) != 2 {
+		t.Errorf("expected 2 items, got %d", len(res.Data))
+	}
+	if len(res.Data) >= 1 && res.Data[0].Nombre != "Producto 03" {
+		t.Errorf("expected Producto 03 first, got %q", res.Data[0].Nombre)
+	}
+}
+
+func TestAdminListSearch(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	// Sembramos dos productos diferenciables por nombre.
+	for _, p := range []struct {
+		nombre string
+		cat    string
+	}{
+		{"Serum Especial X", "rostro"},
+		{"Crema Hidratante Y", "rostro"},
+		{"Tónico Z", "tratamiento"},
+	} {
+		_, err := db.Exec(
+			`INSERT INTO productos (nombre, precio, categoria, stock, img, activo) VALUES ($1,$2,$3,$4,$5,true)`,
+			p.nombre, 10.0, p.cat, 5, "https://example.com/x.jpg",
+		)
+		if err != nil {
+			t.Fatalf("seed %s: %v", p.nombre, err)
+		}
+	}
+
+	// q=serum debe devolver sólo Serum Especial X.
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/productos?q=serum", nil)
+	req.Header.Set("Authorization", adminAuthHeader(t))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var res struct {
+		Data  []models.Producto `json:"data"`
+		Total int               `json:"total"`
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBody, &res)
+	if res.Total != 1 || len(res.Data) != 1 {
+		t.Errorf("expected 1 match, got total=%d len=%d", res.Total, len(res.Data))
+	}
+	if len(res.Data) == 1 && res.Data[0].Nombre != "Serum Especial X" {
+		t.Errorf("expected Serum Especial X, got %q", res.Data[0].Nombre)
+	}
+
+	// q=rostro debe devolver los 2 con categoria=rostro.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/productos?q=rostro", nil)
+	req2.Header.Set("Authorization", adminAuthHeader(t))
+	resp2, _ := app.Test(req2)
+	var res2 struct {
+		Data  []models.Producto `json:"data"`
+		Total int               `json:"total"`
+	}
+	respBody2, _ := io.ReadAll(resp2.Body)
+	_ = json.Unmarshal(respBody2, &res2)
+	if res2.Total != 2 {
+		t.Errorf("expected 2 matches in categoria=rostro, got %d", res2.Total)
+	}
+}
+
+func TestAdminListActivoFilter(t *testing.T) {
+	app, db := setupTestDB(t)
+	defer db.Close()
+	resetProductos(t, db)
+
+	_, _ = db.Exec(`INSERT INTO productos (nombre, precio, categoria, stock, img, activo) VALUES ('Activo',  10, 'rostro', 1, '', true)`)
+	_, _ = db.Exec(`INSERT INTO productos (nombre, precio, categoria, stock, img, activo) VALUES ('Inactivo', 10, 'rostro', 1, '', false)`)
+
+	// activo=true → 1 fila.
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/productos?activo=true", nil)
+	req.Header.Set("Authorization", adminAuthHeader(t))
+	resp, _ := app.Test(req)
+	var res struct {
+		Total int `json:"total"`
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBody, &res)
+	if res.Total != 1 {
+		t.Errorf("expected 1 activo=true, got %d", res.Total)
+	}
+
+	// activo=false → 1 fila.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/productos?activo=false", nil)
+	req2.Header.Set("Authorization", adminAuthHeader(t))
+	resp2, _ := app.Test(req2)
+	var res2 struct {
+		Total int `json:"total"`
+	}
+	respBody2, _ := io.ReadAll(resp2.Body)
+	_ = json.Unmarshal(respBody2, &res2)
+	if res2.Total != 1 {
+		t.Errorf("expected 1 activo=false, got %d", res2.Total)
+	}
+
+	// sin filtro → 2 filas.
+	req3 := httptest.NewRequest(http.MethodGet, "/api/admin/productos", nil)
+	req3.Header.Set("Authorization", adminAuthHeader(t))
+	resp3, _ := app.Test(req3)
+	var res3 struct {
+		Total int `json:"total"`
+	}
+	respBody3, _ := io.ReadAll(resp3.Body)
+	_ = json.Unmarshal(respBody3, &res3)
+	if res3.Total != 2 {
+		t.Errorf("expected 2 sin filtro, got %d", res3.Total)
+	}
+}
+
+// ─────────────────────────── Cache invalidation (F2) ───────────────────────────
+
+// recordingCache implementa interfaces.CacheService registrando Get/Set/Delete
+// para validar que los handlers del catálogo sí escriben y borran la clave
+// correcta. Es in-memory y no toca Redis.
+type recordingCache struct {
+	data    map[string]string
+	deletes map[string]int
+	gets    map[string]int
+}
+
+func newRecordingCache() *recordingCache {
+	return &recordingCache{
+		data:    map[string]string{},
+		deletes: map[string]int{},
+		gets:    map[string]int{},
+	}
+}
+
+func (rc *recordingCache) Get(_ context.Context, k string) (string, error) {
+	rc.gets[k]++
+	if v, ok := rc.data[k]; ok {
+		return v, nil
+	}
+	return "", redis.Nil
+}
+func (rc *recordingCache) Set(_ context.Context, k string, v interface{}, _ time.Duration) error {
+	switch s := v.(type) {
+	case string:
+		rc.data[k] = s
+	case []byte:
+		rc.data[k] = string(s)
+	default:
+		// serializar a JSON como fallback
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		rc.data[k] = string(b)
+	}
+	return nil
+}
+func (rc *recordingCache) Delete(_ context.Context, k string) error {
+	rc.deletes[k]++
+	delete(rc.data, k)
+	return nil
+}
+
+func TestProductoCacheInvalidation(t *testing.T) {
+	// Reconstruimos una app con recordingCache para verificar que el handler
+	// escribe `productos:all` en el primer GET y la borra tras un write admin.
+	db, err := sql.Open("postgres", dsnTest())
+	if err != nil {
+		t.Skipf("DB no disponible: %v", err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Skipf("DB ping fail: %v", err)
+	}
+	defer db.Close()
+	config.DB = db
+	ensureSeed(t, db)
+	resetProductos(t, db)
+	seedProductos(t, db)
+
+	repo := repository.NewRepository(db)
+	cache := newRecordingCache()
+	ctrl := routes.Controllers{
+		Auth:     controllers.NewAuthController(repo),
+		Producto: controllers.NewProductoController(repo, cache),
+		Network:  controllers.NewNetworkController(repo, cache),
+		Checkout: controllers.NewCheckoutController(repo, cache),
+	}
+	app := fiber.New()
+	app.Use(middleware.SecurityHeaders())
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals(middleware.JWTSecretKey, testJWTSecret)
+		return c.Next()
+	})
+	routes.SetupRoutes(app, ctrl, testJWTSecret)
+
+	// 1er GET → cache miss + Set.
+	req := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
+	if _, err := app.Test(req); err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	if cache.gets["productos:all"] == 0 {
+		t.Errorf("expected GET to consult cache")
+	}
+	if _, ok := cache.data["productos:all"]; !ok {
+		t.Errorf("expected cache key productos:all to be set after GET")
+	}
+
+	// 2do GET → cache hit.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
+	if _, err := app.Test(req2); err != nil {
+		t.Fatalf("GET2: %v", err)
+	}
+	if cache.gets["productos:all"] < 2 {
+		t.Errorf("expected cache to be consulted again")
+	}
+
+	// POST admin → debe invalidar cache.
+	postBody := `{"nombre":"Nuevo Cache","precio":10,"categoria":"rostro","stock":1}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(postBody))
+	postReq.Header.Set("Content-Type", "application/json")
+	postReq.Header.Set("Authorization", adminAuthHeader(t))
+	if _, err := app.Test(postReq); err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	if cache.deletes["productos:all"] == 0 {
+		t.Errorf("expected cache key productos:all to be deleted after POST")
+	}
+
+	// PUT admin → debe invalidar cache también.
+	putReq := httptest.NewRequest(http.MethodPut, "/api/admin/productos/1", strings.NewReader(`{"precio":1.5}`))
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.Header.Set("Authorization", adminAuthHeader(t))
+	if _, err := app.Test(putReq); err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+
+	// DELETE admin → debe invalidar cache también.
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/2", nil)
+	delReq.Header.Set("Authorization", adminAuthHeader(t))
+	if _, err := app.Test(delReq); err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	if cache.deletes["productos:all"] < 3 {
+		t.Errorf("expected 3 deletes on cache key productos:all (POST+PUT+DELETE), got %d", cache.deletes["productos:all"])
+	}
+}
+
 // ─────────────────────────── helpers ───────────────────────────
 
 // bcryptHashForTest genera un hash bcrypt cost 12 de plaintext. Se usa
@@ -641,4 +1252,54 @@ func bcryptHashForTest(t *testing.T, plaintext string) string {
 		t.Fatalf("bcrypt: %v", err)
 	}
 	return string(h)
+}
+
+// resetProductos borra la tabla `productos` antes de cada sub-test que
+// requiera estado conocido. Limpia primero pedido_items porque la FK
+// pedido_items.producto_id tiene ON DELETE RESTRICT. También borramos
+// pedidos (cabecera) para no dejar huérfanos que contaminen otros tests.
+// Es seguro aunque las tablas estén vacías.
+func resetProductos(t *testing.T, db *sql.DB) {
+	t.Helper()
+	stmts := []string{
+		`DELETE FROM pedido_items`,
+		`DELETE FROM pedidos`,
+		`DELETE FROM productos`,
+		`ALTER SEQUENCE productos_id_seq RESTART WITH 1`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("[resetProductos] %s: %v", s, err)
+		}
+	}
+}
+
+// seedProductos inserta las 4 filas que el seed 005_fundaciones.sql
+// crea en producción. Coinciden en id/nombre/categoria/stock/img con el
+// entorno real — los tests que esperan estos nombres no se rompen al
+// cambiar de entorno. Activo=true para que la vista pública los vea.
+func seedProductos(t *testing.T, db *sql.DB) {
+	t.Helper()
+	seeds := []struct {
+		nombre    string
+		precio    float64
+		categoria string
+		stock     int
+		img       string
+	}{
+		{"Serum Revitalizante", 45.00, "rostro", 50, "https://picsum.photos/seed/serum/150"},
+		{"Crema Hidratante Pro", 32.50, "rostro", 40, "https://picsum.photos/seed/crema/150"},
+		{"Tónico Purificante", 28.00, "rostro", 35, "https://picsum.photos/seed/tonico/150"},
+		{"Mascarilla Nocturna", 50.00, "tratamiento", 25, "https://picsum.photos/seed/mascarilla/150"},
+	}
+	for _, s := range seeds {
+		_, err := db.Exec(
+			`INSERT INTO productos (nombre, precio, categoria, stock, img, activo)
+			 VALUES ($1, $2, $3, $4, $5, true)`,
+			s.nombre, s.precio, s.categoria, s.stock, s.img,
+		)
+		if err != nil {
+			t.Fatalf("[seedProductos] %s: %v", s.nombre, err)
+		}
+	}
 }
