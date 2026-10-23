@@ -34,7 +34,8 @@ px-4">
             <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8
 border border-slate-200">
                 <div className="text-center mb-8">
-                    <h2 className="text-3xl font-bold text-slate-900">MultiCatálogo</h2>
+                    <h2 className="text-3xl font-bold text-slate-900">Andy Alejandro</h2>
+                    <p className="text-sm font-medium text-marca-600 mt-1">7mo semestre</p>
                     <p className="text-slate-500 mt-2">Ingresa a tu cuenta para
                         continuar</p>
                 </div>
