@@ -1,0 +1,25 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy Practica07 to Staging VM
+        run: |
+          # Crear directorio SSH
+          mkdir -p ~/.ssh
+
+          # Guardar la clave privada
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Agregar host a known_hosts (evita prompt de confirmación)
+          ssh-keyscan -H 100.107.58.106 >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          # Ejecutar script de deploy en VM 109
+          ssh -i ~/.ssh/deploy_key andy@100.107.58.106 '/opt/multicatalogo/deploy.sh'
