@@ -10,15 +10,14 @@ COPY package.json pnpm-lock.yaml ./
 # Instalar dependencias
 RUN npm install -g pnpm && pnpm install --no-frozen-lockfile
 
+# Build arg para la URL del backend (default: localhost)
+ARG VITE_API_URL=http://localhost:3000
+
 # Copiar código fuente
 COPY . .
 
-# Build arg para la URL del backend (default: localhost)
-ARG VITE_API_URL=http://localhost:3000
-ENV VITE_API_URL=$VITE_API_URL
-
-# Buildear
-RUN pnpm run build
+# Buildear con VITE_API_URL disponible para Vite
+RUN VITE_API_URL=${VITE_API_URL} pnpm run build
 
 # Stage 2: Serve
 FROM node:20-alpine
