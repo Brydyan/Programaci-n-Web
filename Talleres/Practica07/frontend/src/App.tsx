@@ -13,9 +13,13 @@ import AdminProductos from './components/AdminProductos';
 import MisPedidos from './components/MisPedidos';
 import AdminPedidos from './components/AdminPedidos';
 import { CartProvider } from './context/CartContext';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { useAuth } from './context/auth';
+import { AuthProvider } from './context/AuthContext';
 import { SidebarProvider } from './context/SidebarContext';
 import { AdminRoute } from './components/AdminRoute';
+import InstallPrompt from './components/InstallPrompt';
+import OfflineBanner from './components/OfflineBanner';
+import UpdatePrompt from './components/UpdatePrompt';
 
 // Componente para proteger las rutas privadas
 const ProtectedRoute = () => {
@@ -34,6 +38,12 @@ function App() {
     <AuthProvider> {/* Proveedor de Autenticación */}
       <CartProvider> {/* Proveedor del Carrito */}
         <SidebarProvider> {/* Proveedor del Sidebar */}
+          {/* Avisos de PWA: se montan fuera de los providers para que
+             ufliquen sobre cualquier pantalla. Ambos devuelven null cuando
+              no hay nada que mostrar. */}
+          <OfflineBanner />
+          <UpdatePrompt />
+          <InstallPrompt />
           <BrowserRouter>
           <Routes>
             {/* Ruta pública */}
@@ -49,6 +59,8 @@ function App() {
                 <Route path="checkout" element={<Checkout />} />
                 <Route path="confirmacion" element={<Confirmacion />} />
                 <Route path="mis-pedidos" element={<MisPedidos />} />
+                {/* Cada usuario tiene su propia red: no es una vista de admin. */}
+                <Route path="mi-red" element={<MiRed />} />
               </Route>
             </Route>
 
@@ -56,7 +68,6 @@ function App() {
             <Route element={<AdminRoute />}>
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
-                <Route path="mi-red" element={<MiRed />} />
                 <Route path="admin/productos" element={<AdminProductos />} />
                 <Route path="admin/pedidos" element={<AdminPedidos />} />
               </Route>

@@ -1,11 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 
 <head>
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>practica06-tema-04-fase-4</title>
+
+  <meta name="description" content="Tienda de cosmética con red de ventas multinivel. Catálogo, pedidos y comisiones." />
+
+  <!-- ── PWA ──────────────────────────────────────────────────────────────
+       El <link rel="manifest"> NO se escribe a mano: vite-plugin-pwa lo
+       inyecta en el build con el manifiesto de vite.config.ts y el hash del
+       service worker. Declararlo aquí duplicaría la fuente de verdad y
+       apuntaría a un manifest que no existe en dev.
+
+       theme-color sí va aquí porque lo usa el navegador para teñir la barra
+       de sistema en modo standalone. Debe coincidir con manifest.theme_color
+       (#1e293b, slate-800); si divergen, el título de la app installed aparece
+       sobre un color distinto al de la barra. -->
+  <meta name="theme-color" content="#1e293b" />
+  <meta name="color-scheme" content="light" />
+
+  <!-- iOS no lee el manifest: necesita sus propias meta tags para instalar. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="MultiCatálogo" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+
+  <title>MultiCatálogo</title>
 </head>
 
 <body>
@@ -14,12 +36,3 @@
 </body>
 
 </html>
-
-<!-- Comentario HTML
-
-type="module",
-le estamos diciendo al navegador web:
-"Oye, este código utiliza el estándar moderno ECMAScript Modules (ESM).
-Vas a encontrar palabras reservadas como import y export en su interior".
-
--->
