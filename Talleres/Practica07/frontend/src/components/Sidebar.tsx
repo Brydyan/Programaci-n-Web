@@ -54,7 +54,9 @@ const Sidebar = () => {
                     isCollapsed ? "text-lg" : ""
                 }`}
             >
-                {isCollapsed ? "MC" : "MultiCatálogo"}
+                {/* Antes "MultiCatálogo" / "MC". El collapse muestra la inicial para que
+                    el título no se corte en la barra de 80px. */}
+                {isCollapsed ? "B" : "BRYDYAN"}
             </div>
             <nav className="flex-1 p-2 md:p-4 space-y-1 md:space-y-2">
                 {visible.length === 0 && (
