@@ -34,9 +34,26 @@ DELETE FROM comisiones      WHERE origen_email LIKE '%@demo.ec';
 DELETE FROM pedido_items    WHERE pedido_id IN (
     SELECT id FROM pedidos WHERE email_usuario LIKE '%@demo.ec');
 DELETE FROM pedidos         WHERE email_usuario LIKE '%@demo.ec';
+-- Sin DELETE FROM referidos aquí, a propósito: referidos_usuario_id_fkey es
+-- ON DELETE CASCADE, así que el DELETE de usuarios de la línea siguiente ya
+-- arrastra sus referidos.
+--
+-- La versión anterior hacía `DELETE FROM referidos WHERE usuario_id IN (SELECT
+-- id FROM usuarios WHERE email LIKE '%@demo.ec')` DESPUÉS de borrar los
+-- usuarios. Ese subquery ya no encontraba nada —los acababa de borrar— así que
+-- la sentencia afectaba cero filas y era código muerto. Peor: aparentaba
+-- limpiar la red cuando el trabajo real lo hacía el CASCADE. Si algún día el
+-- CASCADE cambiara a RESTRICT, el seed empezaría a dejar referidos huérfanos
+-- sin avisar.
+--
+-- liquidaciones_referido_id_fkey es RESTRICT, y comisiones_liquidacion_id_fkey
+-- NO ACTION: por eso las liquidaciones se borran explícitamente y ANTES que las
+-- comisiones que las referencian. Sin esta línea, liquidar a un distribuidor
+-- demo y volver a correr el seed dejaba pagos acumulados y el dataset ya no
+-- era reproducible.
+DELETE FROM liquidaciones  WHERE referido_id IN (
+    SELECT id FROM referidos WHERE codigo LIKE 'MKT-%' OR codigo LIKE 'SOP-%');
 DELETE FROM usuarios        WHERE email LIKE '%@demo.ec';
-DELETE FROM referidos       WHERE usuario_id IN (
-    SELECT id FROM usuarios WHERE email LIKE '%@demo.ec');
 DELETE FROM productos       WHERE nombre LIKE 'Demo %';
 
 -- Reinicia las secuencias para que la corrida N produzca EXACTAMENTE los

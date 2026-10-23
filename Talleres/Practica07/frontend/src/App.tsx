@@ -13,6 +13,7 @@ import Confirmacion from './components/Confirmacion';
 import AdminProductos from './components/AdminProductos';
 import MisPedidos from './components/MisPedidos';
 import AdminPedidos from './components/AdminPedidos';
+import Liquidaciones from './components/Liquidaciones';
 import { CartProvider } from './context/CartContext';
 import { useAuth } from './context/auth';
 import { AuthProvider } from './context/AuthContext';
@@ -73,6 +74,8 @@ function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="admin/productos" element={<AdminProductos />} />
                 <Route path="admin/pedidos" element={<AdminPedidos />} />
+                {/* Cobro de comisiones: consultar deuda y pagarla. */}
+                <Route path="admin/liquidaciones" element={<Liquidaciones />} />
               </Route>
             </Route>
 

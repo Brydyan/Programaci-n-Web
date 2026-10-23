@@ -7,7 +7,7 @@ import type {
   Liquidacion,
   LoginResponse,
   NodoRed,
-  Paginado,
+  Pagina,
   RegisterRequest,
   RegisterResponse,
   Rol,
@@ -116,10 +116,10 @@ export const getComisionesMiasAPI = (params?: { estado?: EstadoComision }): Prom
  */
 export const getLiquidacionesMiasAPI = (
   params?: { page?: number; limit?: number },
-): Promise<Paginado<Liquidacion>> => {
+): Promise<Pagina<Liquidacion>> => {
   const qs = new URLSearchParams();
   if (params?.page) qs.set('page', String(params.page));
   if (params?.limit) qs.set('limit', String(params.limit));
   const sufijo = qs.toString() ? `?${qs.toString()}` : '';
-  return apiFetch<Paginado<Liquidacion>>(`/api/liquidaciones/mias${sufijo}`, { method: 'GET' });
+  return apiFetch<Pagina<Liquidacion>>(`/api/liquidaciones/mias${sufijo}`, { method: 'GET' });
 };

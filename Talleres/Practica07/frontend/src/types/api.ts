@@ -220,17 +220,17 @@ export interface Liquidacion {
 }
 
 /**
- * Envoltura de las respuestas paginadas del backend: {data, limit, page, total}.
- *
- * El backend pagina en unos endpoints y no en otros — `/comisiones/mias` no
- * pagina (trae los totales por estado en la misma respuesta), mientras que
- * `/liquidaciones/mias` sí. Por eso el tipo genérico no se aplica a todo.
+ * Fila de la pantalla de liquidación: cuánto se le debe a cada distribuidor
+ * y cuántas comisiones componen esa deuda. `ultima_pago` es "" cuando
+ * nunca se le pagó, no null.
  */
-export interface Paginado<T> {
-  data: T[];
-  limit: number;
-  page: number;
+export interface DeudaDistribuidor {
+  referido_id: number;
+  codigo: string;
+  nombre: string;
   total: number;
+  comisiones: number;
+  ultima_pago?: string;
 }
 
 // ── Reportes ────────────────────────────────────────────────

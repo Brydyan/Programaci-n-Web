@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { MdInventory2, MdOutlineDashboard } from "react-icons/md";
 import { GrCatalog } from "react-icons/gr";
-import { FaNetworkWired, FaReceipt, FaClipboardList, FaPiggyBank } from "react-icons/fa";
+import { FaNetworkWired, FaReceipt, FaClipboardList, FaPiggyBank, FaMoneyBillWave } from "react-icons/fa";
 import { useSidebar } from "../context/sidebar";
 import { useAuth } from "../context/auth";
 
@@ -20,13 +20,19 @@ const items: Item[] = [
     { to: "/admin/productos",  label: "Productos",  Icon: MdInventory2,       roles: ["admin"] },
     { to: "/mis-pedidos",      label: "Mis Pedidos", Icon: FaReceipt,          roles: ["admin", "cliente"] },
     { to: "/admin/pedidos",    label: "Pedidos",    Icon: FaClipboardList,    roles: ["admin"] },
+    { to: "/admin/liquidaciones", label: "Liquidaciones", Icon: FaMoneyBillWave, roles: ["admin"] },
 ];
 
 const Sidebar = () => {
     const { isCollapsed } = useSidebar();
     const { rol } = useAuth();
 
-    const visible = items.filter((it) => !rol || it.roles.includes(rol));
+    // Sin rol conocido no se muestra NADA, tampoco lo de admin. La guarda
+    // anterior era `!rol || ...`, y con rol null conjunctaba todos los items:
+    // el menú prometía "Pedidos" y "Productos" a un cliente que al pulsarlos
+    // rebotaba en ProtectedRoute. Las rutas ya estaban protegidas, así que no
+    // era un agujero de permisos, solo una promesa incumplida.
+    const visible = rol ? items.filter((it) => it.roles.includes(rol)) : [];
 
     return (
         <aside

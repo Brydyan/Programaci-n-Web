@@ -28,8 +28,10 @@ const Navbar = () => {
                 >
                     <GiHamburgerMenu className="text-xl md:text-2xl text-slate-600" />
                 </button>
+                {/* El título decía "Panel de Administración" fijo, así que un
+                    cliente leía exactamente lo mismo que el admin. */}
                 <h2 className="text-slate-600 font-medium text-sm md:text-lg truncate">
-                    Panel de Administración
+                    {rol === "admin" ? "Panel de Administración" : "Tienda"}
                 </h2>
             </div>
             <div className="flex items-end gap-3 md:gap-6 flex-shrink-0">
