@@ -64,7 +64,16 @@ func dsnTest() string {
 	if v := os.Getenv("DATABASE_URL"); v != "" {
 		return v
 	}
-	return "postgres://admin:secret@localhost:5433/multicatalogo?sslmode=disable"
+	// Por defecto apuntamos a `multicatalogo_test`, NO a `multicatalogo`.
+	//
+	// truncateTestDB() hace DELETE sobre pedidos, comisiones, pedido_items,
+	// liquidaciones y usuarios. Si el default fuera la base de desarrollo,
+	// un `go test ./...` a secas borraría los datos de la demo — y como el
+	// t.Skip de "DB no disponible" sólo se dispara cuando no hay conexión,
+	// el borrado pasaría completamente inadvertido.
+	//
+	// `make db-test` crea esa base y le aplica las migraciones.
+	return "postgres://admin:secret@localhost:5433/multicatalogo_test?sslmode=disable"
 }
 
 // setupTestApp construye una app Fiber con Repository{Nil DB} — útil
@@ -97,6 +106,33 @@ func setupTestApp() *fiber.App {
 
 // setupTestDB abre una conexión a PostgreSQL real y la devuelve, junto
 // con una app Fiber completa. Si la DB no está disponible, el test se
+// salta con un mensaje claro (no se trata como falla porque los tests
+// de F1 son opcionales si el entorno no tiene DB levantada).
+//
+// Cada test que llama a esta función debe ejecutar truncateTestDB(t) en
+// su setup para empezar con un estado limpio (excepto los seeds).
+// timeoutTest es el presupuesto que le damos a cada request de test.
+//
+// app.Test usa 1 segundo por defecto cuando no se le pasa timeout. Ese valor
+// nació pensado para handlers que no tocan nada pesado, pero /api/register
+// hace un bcrypt más varios INSERT contra Postgres: en una máquina cargada —o
+// bajo `go test -race`, que multiplica el tiempo de CPU de bcrypt por 5-10×—
+// el handler pasa de 1s y app.Test devuelve (nil, timeout). Los tests que
+// hacen `resp, _ := app.Test(req)` reciben un *http.Response nil y revientan
+// con un SIGSEGV en la línea siguiente, que no dice nada sobre la causa real.
+//
+// 15s es holgado: los handlers de esta app responden en milisegundos.
+const timeoutTest = 15000 * 1000 * 1000 // 15s en nanosegundos
+
+// doRequest dispara req contra app con timeoutTest y devuelve la respuesta.
+// Firma idéntica a app.Test para poder sustituirla en los tests existentes.
+func doRequest(t *testing.T, app *fiber.App, req *http.Request) (*http.Response, error) {
+	t.Helper()
+	return app.Test(req, timeoutTest)
+}
+
+// setupTestDB monta una app Fiber con la DB real cableada por las variables
+// de paquete (config.DB). Si la DB no está disponible, el test se
 // salta con un mensaje claro (no se trata como falla porque los tests
 // de F1 son opcionales si el entorno no tiene DB levantada).
 //
@@ -217,7 +253,7 @@ func truncateTestDB(t *testing.T, db *sql.DB) {
 func TestHealthCheck(t *testing.T) {
 	app := setupTestApp()
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	resp, err := app.Test(req)
+	resp, err := doRequest(t, app, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -246,7 +282,7 @@ func TestLogin(t *testing.T) {
 	t.Run("Invalid JSON", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader("invalid-json"))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
@@ -262,7 +298,7 @@ func TestLogin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login",
 			strings.NewReader(`{"email":"","password":""}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
@@ -278,7 +314,7 @@ func TestLogin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login",
 			strings.NewReader(`{"email":"admin@upse.edu.ec","password":"short"}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
@@ -294,7 +330,7 @@ func TestLogin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login",
 			strings.NewReader(`{"email":"wrong@upse.edu.ec","password":"wrongpass"}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", resp.StatusCode)
 		}
@@ -311,7 +347,7 @@ func TestLogin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login",
 			strings.NewReader(`{"email":"admin@upse.edu.ec","password":"wrongpassword"}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", resp.StatusCode)
 		}
@@ -321,7 +357,7 @@ func TestLogin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login",
 			strings.NewReader(`{"email":"admin@upse.edu.ec","password":"12345678"}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -363,7 +399,7 @@ func TestLogin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/login",
 			strings.NewReader(`{"email":"inactivo@upse.edu.ec","password":"12345678"}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("expected 403, got %d", resp.StatusCode)
 		}
@@ -386,7 +422,7 @@ func TestRegisterHappy(t *testing.T) {
 	body := `{"nombre":"Ana Nueva","email":"ana.nueva@upse.edu.ec","password":"supersecret","ref":""}`
 	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
 	}
@@ -424,7 +460,7 @@ func TestRegisterDupEmail(t *testing.T) {
 	body := `{"nombre":"Ana Dup","email":"dup@upse.edu.ec","password":"supersecret"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("primer registro: expected 201, got %d", resp.StatusCode)
 	}
@@ -432,7 +468,7 @@ func TestRegisterDupEmail(t *testing.T) {
 	// Segundo registro con el mismo email → 409 CONFLICT.
 	req2 := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req2.Header.Set("Content-Type", "application/json")
-	resp2, _ := app.Test(req2)
+	resp2, _ := doRequest(t, app, req2)
 	if resp2.StatusCode != http.StatusConflict {
 		t.Errorf("expected 409, got %d", resp2.StatusCode)
 	}
@@ -454,7 +490,11 @@ func TestRegisterInvalidRef(t *testing.T) {
 	body := `{"nombre":"Ana Ref","email":"ana.ref@upse.edu.ec","password":"supersecret","ref":"XXXXXX"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
+	resp, err := doRequest(t, app, req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
@@ -476,7 +516,7 @@ func TestRegisterInvalidRefNoExiste(t *testing.T) {
 	body := `{"nombre":"Ana Ref2","email":"ana.ref2@upse.edu.ec","password":"supersecret","ref":"ABCDEF"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
@@ -490,7 +530,7 @@ func TestRegisterValidation(t *testing.T) {
 	body := `{"nombre":"X","email":"","password":"supersecret"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
@@ -508,7 +548,10 @@ func TestRegisterRateLimit(t *testing.T) {
 		body := `{"nombre":"Rate User","email":"r` + strconv.Itoa(i) + `@upse.edu.ec","password":"supersecret"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, err := doRequest(t, app, req)
+		if err != nil {
+			t.Fatalf("iter %d: app.Test: %v", i, err)
+		}
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("iter %d: expected 201, got %d", i, resp.StatusCode)
 		}
@@ -517,7 +560,7 @@ func TestRegisterRateLimit(t *testing.T) {
 	body := `{"nombre":"R","email":"r11@upse.edu.ec","password":"supersecret"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("expected 429, got %d", resp.StatusCode)
 	}
@@ -543,7 +586,7 @@ func TestProductos(t *testing.T) {
 		seedProductos(t, db)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -564,7 +607,7 @@ func TestProductos(t *testing.T) {
 
 	t.Run("Get product by ID - invalid ID", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/productos/abc", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
@@ -578,7 +621,7 @@ func TestProductos(t *testing.T) {
 
 	t.Run("Get product by ID - not found", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/productos/9999", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", resp.StatusCode)
 		}
@@ -595,7 +638,7 @@ func TestProductos(t *testing.T) {
 		seedProductos(t, db)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/productos/1", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -612,7 +655,7 @@ func TestProductos(t *testing.T) {
 		seedProductos(t, db)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/producto/2", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
@@ -639,7 +682,7 @@ func TestProductos(t *testing.T) {
 		}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
@@ -663,7 +706,7 @@ func TestNetwork_requiereRolAdmin(t *testing.T) {
 
 	t.Run("sin token → 401", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/red", nil)
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", resp.StatusCode)
 		}
@@ -672,7 +715,7 @@ func TestNetwork_requiereRolAdmin(t *testing.T) {
 	t.Run("token de cliente → 403", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/red", nil)
 		req.Header.Set("Authorization", clientAuthHeader(t))
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("expected 403, got %d", resp.StatusCode)
 		}
@@ -728,7 +771,7 @@ func TestRedMia_devuelveSubarbolDelUsuario(t *testing.T) {
 		}
 		req := httptest.NewRequest(http.MethodGet, "/api/red/mia", nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
-		resp, err := app.Test(req)
+		resp, err := doRequest(t, app, req)
 		if err != nil {
 			t.Fatalf("GET /api/red/mia: %v", err)
 		}
@@ -789,7 +832,7 @@ func TestCheckout(t *testing.T) {
 		body := `{"nombre":"Test","direccion":"Av. 10 de Agosto 100","ciudad":"Quito","telefono":"0987654321","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", resp.StatusCode)
 		}
@@ -799,7 +842,7 @@ func TestCheckout(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader("invalid"))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", clientAuthHeader(t))
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
@@ -811,7 +854,7 @@ func TestCheckout(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", clientAuthHeader(t))
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("expected 400, got %d", resp.StatusCode)
 		}
@@ -823,7 +866,7 @@ func TestCheckout(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", clientAuthHeader(t))
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusInternalServerError {
 			t.Errorf("expected 500 (no DB), got %d", resp.StatusCode)
 		}
@@ -884,7 +927,7 @@ func TestAdminCreate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", adminAuthHeader(t))
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", resp.StatusCode)
 	}
@@ -903,7 +946,7 @@ func TestAdminCreate(t *testing.T) {
 
 	// GET público debe devolverlo (la creación invalida el caché).
 	getReq := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
-	getResp, _ := app.Test(getReq)
+	getResp, _ := doRequest(t, app, getReq)
 	var list []models.Producto
 	listBody, _ := io.ReadAll(getResp.Body)
 	_ = json.Unmarshal(listBody, &list)
@@ -928,7 +971,7 @@ func TestAdminCreateForbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", clientAuthHeader(t)) // rol=cliente
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", resp.StatusCode)
 	}
@@ -949,7 +992,7 @@ func TestAdminCreateNoAuth(t *testing.T) {
 		strings.NewReader(`{"nombre":"X","precio":10,"categoria":"rostro","stock":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	// sin Authorization
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", resp.StatusCode)
 	}
@@ -975,7 +1018,7 @@ func TestAdminCreateValidation(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", adminAuthHeader(t))
-			resp, _ := app.Test(req)
+			resp, _ := doRequest(t, app, req)
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("expected 400, got %d", resp.StatusCode)
 			}
@@ -1000,7 +1043,7 @@ func TestAdminUpdate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/admin/productos/1", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", adminAuthHeader(t))
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -1026,7 +1069,7 @@ func TestAdminUpdate(t *testing.T) {
 		strings.NewReader(`{"precio":1}`))
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Authorization", adminAuthHeader(t))
-	resp2, _ := app.Test(req2)
+	resp2, _ := doRequest(t, app, req2)
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 on missing id, got %d", resp2.StatusCode)
 	}
@@ -1057,7 +1100,7 @@ func TestAdminSoftDelete(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/1", nil)
 	req.Header.Set("Authorization", adminAuthHeader(t))
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", resp.StatusCode)
 	}
@@ -1073,7 +1116,7 @@ func TestAdminSoftDelete(t *testing.T) {
 
 	// GET público lo debe excluir.
 	getReq := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
-	getResp, _ := app.Test(getReq)
+	getResp, _ := doRequest(t, app, getReq)
 	var list []models.Producto
 	listBody, _ := io.ReadAll(getResp.Body)
 	_ = json.Unmarshal(listBody, &list)
@@ -1095,7 +1138,7 @@ func TestAdminSoftDelete(t *testing.T) {
 	// Soft-delete idempotente: borrar dos veces no debe fallar.
 	req2 := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/1", nil)
 	req2.Header.Set("Authorization", adminAuthHeader(t))
-	resp2, _ := app.Test(req2)
+	resp2, _ := doRequest(t, app, req2)
 	if resp2.StatusCode != http.StatusNoContent {
 		t.Errorf("second DELETE should be idempotent (204), got %d", resp2.StatusCode)
 	}
@@ -1103,7 +1146,7 @@ func TestAdminSoftDelete(t *testing.T) {
 	// Soft-delete de id inexistente → 404.
 	req3 := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/9999", nil)
 	req3.Header.Set("Authorization", adminAuthHeader(t))
-	resp3, _ := app.Test(req3)
+	resp3, _ := doRequest(t, app, req3)
 	if resp3.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 on missing id, got %d", resp3.StatusCode)
 	}
@@ -1128,7 +1171,7 @@ func TestAdminListPagination(t *testing.T) {
 	// ?page=2&limit=2 debe devolver productos 3 y 4.
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/productos?page=2&limit=2", nil)
 	req.Header.Set("Authorization", adminAuthHeader(t))
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -1177,7 +1220,7 @@ func TestAdminListSearch(t *testing.T) {
 	// q=serum debe devolver sólo Serum Especial X.
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/productos?q=serum", nil)
 	req.Header.Set("Authorization", adminAuthHeader(t))
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -1197,7 +1240,7 @@ func TestAdminListSearch(t *testing.T) {
 	// q=rostro debe devolver los 2 con categoria=rostro.
 	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/productos?q=rostro", nil)
 	req2.Header.Set("Authorization", adminAuthHeader(t))
-	resp2, _ := app.Test(req2)
+	resp2, _ := doRequest(t, app, req2)
 	var res2 struct {
 		Data  []models.Producto `json:"data"`
 		Total int               `json:"total"`
@@ -1220,7 +1263,7 @@ func TestAdminListActivoFilter(t *testing.T) {
 	// activo=true → 1 fila.
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/productos?activo=true", nil)
 	req.Header.Set("Authorization", adminAuthHeader(t))
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	var res struct {
 		Total int `json:"total"`
 	}
@@ -1233,7 +1276,7 @@ func TestAdminListActivoFilter(t *testing.T) {
 	// activo=false → 1 fila.
 	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/productos?activo=false", nil)
 	req2.Header.Set("Authorization", adminAuthHeader(t))
-	resp2, _ := app.Test(req2)
+	resp2, _ := doRequest(t, app, req2)
 	var res2 struct {
 		Total int `json:"total"`
 	}
@@ -1246,7 +1289,7 @@ func TestAdminListActivoFilter(t *testing.T) {
 	// sin filtro → 2 filas.
 	req3 := httptest.NewRequest(http.MethodGet, "/api/admin/productos", nil)
 	req3.Header.Set("Authorization", adminAuthHeader(t))
-	resp3, _ := app.Test(req3)
+	resp3, _ := doRequest(t, app, req3)
 	var res3 struct {
 		Total int `json:"total"`
 	}
@@ -1348,7 +1391,7 @@ func TestProductoCacheInvalidation(t *testing.T) {
 
 	// 1er GET → cache miss + Set.
 	req := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
-	if _, err := app.Test(req); err != nil {
+	if _, err := doRequest(t, app, req); err != nil {
 		t.Fatalf("GET: %v", err)
 	}
 	if cache.gets["productos:all"] == 0 {
@@ -1360,7 +1403,7 @@ func TestProductoCacheInvalidation(t *testing.T) {
 
 	// 2do GET → cache hit.
 	req2 := httptest.NewRequest(http.MethodGet, "/api/productos", nil)
-	if _, err := app.Test(req2); err != nil {
+	if _, err := doRequest(t, app, req2); err != nil {
 		t.Fatalf("GET2: %v", err)
 	}
 	if cache.gets["productos:all"] < 2 {
@@ -1372,7 +1415,7 @@ func TestProductoCacheInvalidation(t *testing.T) {
 	postReq := httptest.NewRequest(http.MethodPost, "/api/admin/productos", strings.NewReader(postBody))
 	postReq.Header.Set("Content-Type", "application/json")
 	postReq.Header.Set("Authorization", adminAuthHeader(t))
-	if _, err := app.Test(postReq); err != nil {
+	if _, err := doRequest(t, app, postReq); err != nil {
 		t.Fatalf("POST: %v", err)
 	}
 	if cache.deletes["productos:all"] == 0 {
@@ -1383,14 +1426,14 @@ func TestProductoCacheInvalidation(t *testing.T) {
 	putReq := httptest.NewRequest(http.MethodPut, "/api/admin/productos/1", strings.NewReader(`{"precio":1.5}`))
 	putReq.Header.Set("Content-Type", "application/json")
 	putReq.Header.Set("Authorization", adminAuthHeader(t))
-	if _, err := app.Test(putReq); err != nil {
+	if _, err := doRequest(t, app, putReq); err != nil {
 		t.Fatalf("PUT: %v", err)
 	}
 
 	// DELETE admin → debe invalidar cache también.
 	delReq := httptest.NewRequest(http.MethodDelete, "/api/admin/productos/2", nil)
 	delReq.Header.Set("Authorization", adminAuthHeader(t))
-	if _, err := app.Test(delReq); err != nil {
+	if _, err := doRequest(t, app, delReq); err != nil {
 		t.Fatalf("DELETE: %v", err)
 	}
 	if cache.deletes["productos:all"] < 3 {
@@ -1497,7 +1540,7 @@ func doJSON(t *testing.T, app *fiber.App, method, path, body, authHeader string)
 	if authHeader != "" {
 		r.Header.Set("Authorization", authHeader)
 	}
-	resp, err := app.Test(r, -1)
+	resp, err := doRequest(t, app, r)
 	if err != nil {
 		t.Fatalf("app.Test: %v", err)
 	}
@@ -2136,15 +2179,19 @@ func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
 
 	// ── 1) Compra como el usuario más abajo de la cadena ──────────────────
 	tokenComprador := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
+	// T4 hizo obligatorios direccion/ciudad/telefono. `email` ya no viaja en
+	// el body: el backend lo toma del token (dto.EmailUsuario es `json:"-"`),
+	// así que mandarlo aquí sería sobreescribir la identidad del comprador.
 	body := fmt.Sprintf(
-		`{"nombre":"Compra","email":"comprador@prueba.com","metodo_pago":"tarjeta",`+
+		`{"nombre":"Compra","direccion":"Av. 10 de Agosto 100","ciudad":"Quito",`+
+			`"telefono":"0987654321","metodo_pago":"tarjeta",`+
 			`"items":[{"id":%d,"nombre":"Producto","precio":100,"cantidad":1}]}`,
 		usuarios.productoID)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tokenComprador)
-	resp, err := app.Test(req)
+	resp, err := doRequest(t, app, req)
 	if err != nil {
 		t.Fatalf("checkout: %v", err)
 	}
@@ -2198,7 +2245,7 @@ func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
 	tokenMedio := firmarToken(t, usuarios.medio, "medio@prueba.com")
 	req = httptest.NewRequest(http.MethodGet, "/api/comisiones/mias", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenMedio)
-	resp, _ = app.Test(req)
+	resp, _ = doRequest(t, app, req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("comisiones/mias: esperaba 200, obtuvo %d", resp.StatusCode)
 	}
@@ -2218,7 +2265,7 @@ func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
 	tokenComprador2 := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
 	req = httptest.NewRequest(http.MethodGet, "/api/comisiones/mias", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenComprador2)
-	resp, _ = app.Test(req)
+	resp, _ = doRequest(t, app, req)
 	bodyBytes, _ = io.ReadAll(resp.Body)
 	_ = json.Unmarshal(bodyBytes, &resumen)
 	if resumen.Total != 0 {
@@ -2228,7 +2275,7 @@ func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
 	// ── 4) Un filtro de estado inválido se rechaza con 400 ─────────────────
 	req = httptest.NewRequest(http.MethodGet, "/api/comisiones/mias?estado=inventado", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenMedio)
-	resp, _ = app.Test(req)
+	resp, _ = doRequest(t, app, req)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("un estado inválido debería dar 400, dio %d", resp.StatusCode)
 	}
@@ -2266,7 +2313,7 @@ func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
 		strings.NewReader(`{"estado":"cancelado"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tokenAdmin)
-	resp, _ = app.Test(req)
+	resp, _ = doRequest(t, app, req)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("cancelación: esperaba 204, obtuvo %d", resp.StatusCode)
 	}
@@ -2292,7 +2339,7 @@ func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
 func TestComisionesMias_requiereAuth(t *testing.T) {
 	app := setupTestApp()
 	req := httptest.NewRequest(http.MethodGet, "/api/comisiones/mias", nil)
-	resp, _ := app.Test(req)
+	resp, _ := doRequest(t, app, req)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("sin token esperaba 401, obtuvo %d", resp.StatusCode)
 	}
@@ -2320,6 +2367,16 @@ func limpiarRestosCadena(t *testing.T, db *sql.DB) {
 	_, _ = db.Exec(`DELETE FROM pedido_items WHERE pedido_id IN (
 		SELECT id FROM pedidos WHERE email_usuario LIKE '%@prueba.com')`)
 	_, _ = db.Exec(`DELETE FROM pedidos WHERE email_usuario LIKE '%@prueba.com'`)
+	// liquidaciones.referido_id es FK RESTRICT: sin este DELETE, borrar los
+	// usuarios de la cadena aborta en la segunda corrida del test, porque la
+	// liquidación que dejó la corrida anterior sigue apuntando a su referido.
+	// Va después de pedidos (que arrastra las comisiones en CASCADE, y las
+	// comisiones son las que referencian liquidaciones.liquidacion_id) y
+	// antes de borrar usuarios y referidos.
+	if _, err := db.Exec(`DELETE FROM liquidaciones WHERE referido_id IN (
+		SELECT id FROM referidos WHERE codigo IN ('ARRIBA','MEDIO','COMPRADOR'))`); err != nil {
+		t.Fatalf("[cadena] limpiando liquidaciones: %v", err)
+	}
 	for _, email := range []string{"arriba@prueba.com", "medio@prueba.com", "comprador@prueba.com"} {
 		if _, err := db.Exec(`DELETE FROM usuarios WHERE email = $1`, email); err != nil {
 			t.Fatalf("[cadena] limpiando usuario %s: %v", email, err)
@@ -2506,13 +2563,16 @@ func TestLiquidacion_pagaLoPendienteYNoRepite(t *testing.T) {
 
 	// Generamos comisiones reales: el comprador compra.
 	tokenComprador := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
+	// Mismo contrato que el checkout de arriba: dirección obligatoria (T4),
+	// sin `email` en el body porque la identidad sale del token.
 	carrito := fmt.Sprintf(
-		`{"nombre":"Compra","email":"comprador@prueba.com","metodo_pago":"tarjeta",`+
+		`{"nombre":"Compra","direccion":"Av. 10 de Agosto 100","ciudad":"Quito",`+
+			`"telefono":"0987654321","metodo_pago":"tarjeta",`+
 			`"items":[{"id":%d,"nombre":"P","precio":100,"cantidad":1}]}`, usuarios.productoID)
 	req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(carrito))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tokenComprador)
-	if resp, _ := app.Test(req); resp.StatusCode != http.StatusCreated {
+	if resp, _ := doRequest(t, app, req); resp.StatusCode != http.StatusCreated {
 		t.Fatalf("checkout: esperaba 201, obtuvo %d", resp.StatusCode)
 	}
 
@@ -2526,12 +2586,40 @@ func TestLiquidacion_pagaLoPendienteYNoRepite(t *testing.T) {
 	if err := json.Unmarshal(bodyBytes, &deudas); err != nil {
 		t.Fatalf("deuda ilegible: %v (%s)", err, bodyBytes)
 	}
-	if len(deudas) != 1 || deudas[0].ReferidoID != usuarios.referidoMedio {
-		t.Fatalf("esperaba deuda sólo del nivel 1, obtuve %+v", deudas)
+	// La cadena es arriba(1) ← medio(2) ← comprador: el devengo payout a los
+	// DOS niveles del uplink (10% al nivel 1, 5% al nivel 2), no sólo al
+	// primero. Este test asumía una sola deuda —asunción que nunca se
+	// ejecutó porque sin DB hacía skip— y ahora verifica explícitamente
+	// que el nivel 2 también entra al ledger.
+	//
+	// Indexamos por ReferidoID en vez de por posición: la consulta ordena
+	// por `total DESC`, así que el orden no es un contrato.
+	deudasPorID := map[int]models.DeudaDistribuidor{}
+	for _, d := range deudas {
+		deudasPorID[d.ReferidoID] = d
 	}
-	if deudas[0].Total != 10 || deudas[0].Comisiones != 1 {
-		t.Errorf("deuda esperada 10.00 / 1 comisión, obtuve %.2f / %d",
-			deudas[0].Total, deudas[0].Comisiones)
+	esperadas := []struct {
+		referidoID int
+		codigo     string
+		total      float64
+	}{
+		{usuarios.referidoMedio, "MEDIO", 10},  // 10% de 100.00
+		{usuarios.referidoArriba, "ARRIBA", 5}, //  5% de 100.00
+	}
+	for _, e := range esperadas {
+		d, ok := deudasPorID[e.referidoID]
+		if !ok {
+			t.Errorf("%s (%d) debía tener deuda y no aparece en %+v", e.codigo, e.referidoID, deudas)
+			continue
+		}
+		if d.Total != e.total || d.Comisiones != 1 {
+			t.Errorf("%s: esperaba deuda %.2f / 1 comisión, obtuve %.2f / %d",
+				e.codigo, e.total, d.Total, d.Comisiones)
+		}
+	}
+	if len(deudas) != len(esperadas) {
+		t.Errorf("esperaba exactamente %d deudas (una por nivel), obtuve %d: %+v",
+			len(esperadas), len(deudas), deudas)
 	}
 
 	// Liquidar.
@@ -2634,7 +2722,7 @@ func TestLiquidar_requiereAdmin(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/liquidaciones",
 			strings.NewReader(`{"referido_id":1}`))
 		req.Header.Set("Content-Type", "application/json")
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("esperaba 401, obtuvo %d", resp.StatusCode)
 		}
@@ -2645,7 +2733,7 @@ func TestLiquidar_requiereAdmin(t *testing.T) {
 			strings.NewReader(`{"referido_id":1}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", clientAuthHeader(t))
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("esperaba 403, obtuvo %d", resp.StatusCode)
 		}
@@ -2656,7 +2744,7 @@ func TestLiquidar_requiereAdmin(t *testing.T) {
 			strings.NewReader(`{"referido_id":0}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", adminAuthHeader(t))
-		resp, _ := app.Test(req)
+		resp, _ := doRequest(t, app, req)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("esperaba 400, obtuvo %d", resp.StatusCode)
 		}
@@ -2670,7 +2758,7 @@ func pedirLiquidar(t *testing.T, app *fiber.App, token, body string) *http.Respo
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/liquidaciones", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := app.Test(req)
+	resp, err := doRequest(t, app, req)
 	if err != nil {
 		t.Fatalf("POST liquidaciones: %v", err)
 	}
@@ -2681,7 +2769,7 @@ func pedirDeuda(t *testing.T, app *fiber.App, token string) *http.Response {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/liquidaciones/deuda", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := app.Test(req)
+	resp, err := doRequest(t, app, req)
 	if err != nil {
 		t.Fatalf("GET deuda: %v", err)
 	}
@@ -2692,7 +2780,7 @@ func pedirHistorial(t *testing.T, app *fiber.App, token, path string) *http.Resp
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := app.Test(req)
+	resp, err := doRequest(t, app, req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
