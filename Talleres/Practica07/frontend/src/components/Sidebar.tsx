@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { MdInventory2, MdOutlineDashboard } from "react-icons/md";
 import { GrCatalog } from "react-icons/gr";
-import { FaNetworkWired, FaReceipt, FaClipboardList, FaPiggyBank, FaMoneyBillWave } from "react-icons/fa";
+import { FaNetworkWired, FaReceipt, FaClipboardList, FaPiggyBank, FaMoneyBillWave, FaSearchDollar, FaSitemap } from "react-icons/fa";
 import { useSidebar } from "../context/sidebar";
 import { useAuth } from "../context/auth";
 
@@ -21,6 +21,8 @@ const items: Item[] = [
     { to: "/mis-pedidos",      label: "Mis Pedidos", Icon: FaReceipt,          roles: ["admin", "cliente"] },
     { to: "/admin/pedidos",    label: "Pedidos",    Icon: FaClipboardList,    roles: ["admin"] },
     { to: "/admin/liquidaciones", label: "Liquidaciones", Icon: FaMoneyBillWave, roles: ["admin"] },
+    { to: "/admin/comisiones", label: "Auditoría", Icon: FaSearchDollar, roles: ["admin"] },
+    { to: "/admin/red", label: "Red Global", Icon: FaSitemap, roles: ["admin"] },
 ];
 
 const Sidebar = () => {

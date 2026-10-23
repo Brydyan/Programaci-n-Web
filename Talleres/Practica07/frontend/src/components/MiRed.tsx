@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
-import { getComisionesMiasAPI, getRedMiaAPI } from '../services/api';
+import { getComisionesMiasAPI } from '../services/api';
+import { getRedMiaAPI } from '../services/redService';
 import {
   getErrorMessage,
   type ComisionResumen,
@@ -8,6 +9,8 @@ import {
   type NodoRed,
 } from '../types/api';
 import { useAuth } from '../context/auth';
+import { RamaRed, ResumenCards } from './RedArbol';
+import { resumenRed } from './redUtils';
 
 /**
  * "Mi Red" — Sprint 1.
@@ -20,18 +23,6 @@ import { useAuth } from '../context/auth';
  */
 
 const money = (n: number) => `$${n.toFixed(2)}`;
-
-/** Totales de toda la rama, para la tarjeta resumen. */
-const resumen = (nodos: NodoRed[]) =>
-  nodos.reduce(
-    (acc, n) => {
-      const hijos = resumen(n.hijos ?? []);
-      acc.nodos += 1 + hijos.nodos;
-      acc.ventas += n.ventas + hijos.ventas;
-      return acc;
-    },
-    { nodos: 0, ventas: 0 },
-  );
 
 const MiRed = () => {
   const { userEmail } = useAuth();
@@ -108,7 +99,7 @@ const MiRed = () => {
     );
   }
 
-  const totales = resumen(arbol);
+  const totales = resumenRed(arbol);
 
   return (
     <div>
@@ -165,21 +156,13 @@ const MiRed = () => {
             </div>
           </div>
 
-          {/* Resumen de la rama. */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-lg border border-slate-200">
-              <p className="text-xs uppercase font-semibold text-slate-500">En mi red</p>
-              <p className="text-2xl font-bold text-indigo-600">{totales.nodos}</p>
-            </div>
-            <div className="bg-white p-4 rounded-lg border border-slate-200">
-              <p className="text-xs uppercase font-semibold text-slate-500">Ventas generadas</p>
-              <p className="text-2xl font-bold text-indigo-600">{money(totales.ventas)}</p>
-            </div>
-          </div>
+          {/* Resumen de la rama. Compartido con "Red Global" para que las
+              dos vistas no puedan mostrar cifras distintas. */}
+          <ResumenCards resumen={totales} />
 
           <PanelComisiones resumen={comisiones} />
 
-          <Rama nodos={miNodo.hijos ?? []} nivel={1} />
+          <RamaRed nodos={miNodo.hijos ?? []} nivel={1} />
         </>
       )}
     </div>
@@ -242,42 +225,6 @@ const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
         })}
       </div>
     </div>
-  );
-};
-
-/** Una rama del árbol. Se dibuja con líneas de guía, mobile-first. */
-const Rama = ({ nodos, nivel }: { nodos: NodoRed[]; nivel: number }) => {
-  if (nodos.length === 0) {
-    return (
-      <div className="bg-white rounded-lg border border-dashed border-slate-300 p-6 text-center text-slate-500 text-sm">
-        Nadie se ha unido a tu red todavía.
-      </div>
-    );
-  }
-
-  return (
-    <ul className={nivel === 1 ? 'space-y-3' : 'space-y-2 mt-2'}>
-      {nodos.map((n) => (
-        <li key={n.id}>
-          <div
-            className={`bg-white rounded-lg border border-slate-200 p-3 shadow-sm ${
-              nivel === 1 ? 'border-l-4 border-l-indigo-400' : 'border-l-4 border-l-slate-300 ml-3'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-semibold text-slate-800 truncate">{n.nombre}</p>
-                <p className="text-xs text-slate-500">
-                  Nivel {n.nivel} · <span className="font-mono">{n.codigo}</span>
-                </p>
-              </div>
-              <p className="text-sm font-semibold text-indigo-600 shrink-0">{money(n.ventas)}</p>
-            </div>
-          </div>
-          {n.hijos && n.hijos.length > 0 && <Rama nodos={n.hijos} nivel={nivel + 1} />}
-        </li>
-      ))}
-    </ul>
   );
 };
 

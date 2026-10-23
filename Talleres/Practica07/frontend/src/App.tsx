@@ -14,6 +14,8 @@ import AdminProductos from './components/AdminProductos';
 import MisPedidos from './components/MisPedidos';
 import AdminPedidos from './components/AdminPedidos';
 import Liquidaciones from './components/Liquidaciones';
+import ComisionesAdmin from './components/ComisionesAdmin';
+import RedGlobal from './components/RedGlobal';
 import { CartProvider } from './context/CartContext';
 import { useAuth } from './context/auth';
 import { AuthProvider } from './context/AuthContext';
@@ -76,6 +78,9 @@ function App() {
                 <Route path="admin/pedidos" element={<AdminPedidos />} />
                 {/* Cobro de comisiones: consultar deuda y pagarla. */}
                 <Route path="admin/liquidaciones" element={<Liquidaciones />} />
+                {/* Auditoría del ledger y estructura completa de la red. */}
+                <Route path="admin/comisiones" element={<ComisionesAdmin />} />
+                <Route path="admin/red" element={<RedGlobal />} />
               </Route>
             </Route>
 

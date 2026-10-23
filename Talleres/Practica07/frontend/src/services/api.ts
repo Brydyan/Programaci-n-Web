@@ -6,7 +6,6 @@ import type {
   Health,
   Liquidacion,
   LoginResponse,
-  NodoRed,
   Pagina,
   RegisterRequest,
   RegisterResponse,
@@ -96,12 +95,14 @@ export const registerAPI = (payload: RegisterRequest): Promise<RegisterResponse>
 export const healthAPI = (): Promise<Health> => apiFetch<Health>('/api/health', { method: 'GET' });
 
 /**
- * Subárbol del usuario autenticado (Sprint 1). Usa apiFetch para que viaje el
- * token: /api/red/mia está detrás de RequireAuth y devuelve el árbol anidado.
- * `GET /api/red` (vista global) queda reservada al admin.
+ * La red se sirve desde ./redService, junto con el árbol global del admin:
+ * las dos funciones comparten forma de respuesta y no tiene sentido tener
+ * una acá y otra allí. Se reexporta para no romper los imports existentes.
+ *
+ *   GET /api/red/mia  → subárbol del usuario (nivel 0 = el propio usuario)
+ *   GET /api/red      → árbol completo, admin only
  */
-export const getRedMiaAPI = (): Promise<NodoRed[]> =>
-  apiFetch<NodoRed[]>('/api/red/mia', { method: 'GET' });
+export { getRedGlobalAPI, getRedMiaAPI } from './redService';
 
 /** Ledger del usuario autenticado (Sprint 2). Sin paginación: el panel de
  *  "Mis comisiones" muestra las más recientes y los totales por estado. */
