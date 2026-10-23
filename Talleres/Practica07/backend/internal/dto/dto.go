@@ -97,6 +97,40 @@ type PedidoEstadoUpdate struct {
 	Estado string `json:"estado" validate:"required,oneof=pendiente preparando enviado entregado cancelado"`
 }
 
+// ─────────────────────────── Checkout ────────────────────────────────────────
+
+// ItemCarrito es una línea del carrito tal como la manda el cliente.
+//
+// El precio NO se valida contra el catálogo a propósito: es un dato no
+// confiable y el repository lo ignora, recalculando el total desde la tabla
+// `productos`. Validarlo aquí sólo daría una falsa sensación de seguridad.
+type ItemCarrito struct {
+	ID       int     `json:"id"       validate:"required,gt=0"`
+	Nombre   string  `json:"nombre"   validate:"required,max=200"`
+	Precio   float64 `json:"precio"   validate:"gte=0"`
+	Cantidad int     `json:"cantidad" validate:"required,gt=0"`
+}
+
+// CheckoutRequest es el cuerpo de POST /api/checkout.
+// Refleja components.schemas.CheckoutRequest de openapi.yaml, incluidos sus
+// `required` y sus longitudes.
+//
+// La identidad no viaja en el body: EmailUsuario lo inyecta el controller desde
+// el JWT (RequireAuth corre antes). Sin `json:"-"` el cliente podría pedir un
+// pedido a nombre de otro simplemente poniendo su email en el JSON.
+type CheckoutRequest struct {
+	// EmailUsuario lo rellena el controller desde el claim `sub`/`email`.
+	// `-` lo hace inmutable desde el exterior.
+	EmailUsuario string `json:"-"`
+
+	Nombre     string        `json:"nombre"      validate:"omitempty,max=120"`
+	Direccion  string        `json:"direccion"   validate:"required,min=5,max=300"`
+	Ciudad     string        `json:"ciudad"      validate:"required,min=2,max=120"`
+	Telefono   string        `json:"telefono"    validate:"required,min=6,max=30"`
+	MetodoPago string        `json:"metodo_pago" validate:"required,min=2,max=60"`
+	Items      []ItemCarrito `json:"items"       validate:"required,min=1,dive"`
+}
+
 // Validate es un helper de cortesía que usa `reflect` para auto-detectar
 // si el target es un puntero, requerido por validator.Struct.
 //

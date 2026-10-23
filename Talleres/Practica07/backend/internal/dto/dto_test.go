@@ -21,10 +21,10 @@ func hasFieldErr(err error, fieldName string) bool {
 
 func TestLoginRequest(t *testing.T) {
 	cases := []struct {
-		name      string
-		req       dto.LoginRequest
-		wantErr   bool
-		errField  string
+		name     string
+		req      dto.LoginRequest
+		wantErr  bool
+		errField string
 	}{
 		{"valid login", dto.LoginRequest{Email: "admin@upse.edu.ec", Password: "supersecreto"}, false, ""},
 		{"empty email fails required", dto.LoginRequest{Email: "", Password: "supersecreto"}, true, "Email"},
