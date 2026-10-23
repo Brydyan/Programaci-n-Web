@@ -43,11 +43,14 @@ func main() {
 	repo := repository.NewRepository(config.DB)
 	cache := config.NewRedisService()
 	ctrl := routes.Controllers{
-		Auth:     controllers.NewAuthController(repo),
-		Producto: controllers.NewProductoController(repo, cache),
-		Network:  controllers.NewNetworkController(repo, cache),
-		Checkout: controllers.NewCheckoutController(repo, cache),
-		Pedidos:  controllers.NewPedidosController(repo, cache),
+		Auth:          controllers.NewAuthController(repo, cache),
+		Producto:      controllers.NewProductoController(repo, cache),
+		Network:       controllers.NewNetworkController(repo, cache),
+		Checkout:      controllers.NewCheckoutController(repo, cache),
+		Pedidos:       controllers.NewPedidosController(repo, cache),
+		Comisiones:    controllers.NewComisionesController(repo),
+		Liquidaciones: controllers.NewLiquidacionesController(repo),
+		Reportes:      controllers.NewReportesController(repo, cache),
 	}
 
 	// 5) App + middlewares globales.

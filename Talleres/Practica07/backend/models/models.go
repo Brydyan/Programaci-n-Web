@@ -32,10 +32,16 @@ var (
 	ErrUsuarioNoEncontrado   = errors.New("usuario no encontrado")
 	ErrEmailDuplicado        = errors.New("email ya registrado")
 	ErrCodigoRefInvalido     = errors.New("código de referido inválido")
-	ErrProductoNoEncontrado   = errors.New("producto no encontrado")
+	ErrProductoNoEncontrado  = errors.New("producto no encontrado")
 	ErrProductoDuplicado     = errors.New("producto ya existe")
 	ErrPedidoNoEncontrado    = errors.New("pedido no encontrado")
 	ErrNoEsDuenyo            = errors.New("no autorizado: no es dueño del pedido")
+	// ErrNadaQueLiquidar → 409 CONFLICT: el distribuidor no tiene
+	// comisiones en estado 'pendiente'. Liquidar a alguien que no debe nada
+	// no es un error del sistema, pero tampoco una operación vacía que
+	// debería confirmarse con un 201.
+	ErrNadaQueLiquidar  = errors.New("no hay comisiones pendientes que liquidar")
+	ErrReferidoInvalido = errors.New("distribuidor no encontrado")
 )
 
 // LoginRequest define la estructura esperada para el cuerpo de la petición (JSON) al iniciar sesión.
@@ -112,20 +118,48 @@ type RegisterResult struct {
 	CodigoRef string `json:"codigo_ref"`
 }
 
-type ItemCarrito struct {
-	ID       int     `json:"id"`
-	Nombre   string  `json:"nombre"`
-	Precio   float64 `json:"precio"`
+// Comision es una fila del ledger de comisiones: quién cobró, cuánto y por
+// qué pedido. Es la fuente de verdad del dinero del MLM (a diferencia de
+// `referidos.ventas`, que es sólo un contador de lectura rápida).
+//
+// PedidoID y ReferidoID son punteros porque el esquema tolera NULL en ambas:
+// las filas heredadas de antes de la migración no están enlazadas.
+type Comision struct {
+	ID         int     `json:"id"`
+	PedidoID   *int    `json:"pedido_id,omitempty"`
+	ReferidoID *int    `json:"referido_id,omitempty"`
+	Nivel      int     `json:"nivel"`
+	Porcentaje float64 `json:"porcentaje"`
+	Monto      float64 `json:"monto"`
+	Estado     string  `json:"estado"`
+	CreadoEn   string  `json:"creado_en"`
+}
+
+// ComisionTotal es la agregado por estado de un distribuidor (o global).
+type ComisionTotal struct {
+	Estado   string  `json:"estado"`
+	Total    float64 `json:"total"`
 	Cantidad int     `json:"cantidad"`
 }
 
-type CheckoutRequest struct {
-	Nombre     string        `json:"nombre"`
-	Email      string        `json:"email"`
-	Direccion  string        `json:"direccion"`
-	MetodoPago string        `json:"metodo_pago"`
-	Items      []ItemCarrito `json:"items"`
+// ComisionResumen es la respuesta de GET /api/comisiones/mias y
+// /api/admin/comisiones: la página de filas más los totales por estado, que es
+// lo que el usuario necesita ver de un vistazo ("me deben $X pendientes").
+type ComisionResumen struct {
+	Data    []Comision      `json:"data"`
+	Page    int             `json:"page"`
+	Limit   int             `json:"limit"`
+	Total   int             `json:"total"`
+	Totales []ComisionTotal `json:"totales"`
 }
+
+// ItemCarrito y CheckoutRequest ya NO viven aquí.
+//
+// El body de POST /api/checkout se valida en internal/dto.CheckoutRequest
+// (tags `validate`, y `EmailUsuario` con `json:"-"` para que la identidad no
+// entre desde el body). Duplicar el tipo en models obligaba a mantener dos
+// structs del mismo request y era la vía por la que el email del cliente
+// llegaba al repositorio.
 
 type Pedido struct {
 	ID     int     `json:"id"`
@@ -178,4 +212,77 @@ type PedidoResumen struct {
 	Total     float64 `json:"total"`
 	Estado    string  `json:"estado"`
 	CreatedAt string  `json:"created_at"`
+}
+
+// ── Liquidaciones ───────────────────────────────────────────────────────────
+
+// Liquidacion es un pago grouping las comisiones devengadas por un
+// distribuidor en un periodo. Marcar las comisiones como `pagada` y
+// enlazarlas a esta fila es lo que hace el dinero auditable: se puede
+// responder "qué se le pagó, cuándo y por qué conceptos".
+type Liquidacion struct {
+	ID         int     `json:"id"`
+	ReferidoID int     `json:"referido_id"`
+	Total      float64 `json:"total"`
+	Periodo    string  `json:"periodo,omitempty"`
+	Estado     string  `json:"estado"`
+	CreadoEn   string  `json:"creado_en"`
+	PagadaEn   *string `json:"pagada_en,omitempty"`
+}
+
+// DeudaDistribuidor es la fila de la pantalla de liquidación: cuánto se le
+// debe a cada distribuidor y cuántas comisiones componen esa deuda.
+type DeudaDistribuidor struct {
+	ReferidoID int     `json:"referido_id"`
+	Codigo     string  `json:"codigo"`
+	Nombre     string  `json:"nombre"`
+	Total      float64 `json:"total"`
+	Comisiones int     `json:"comisiones"`
+	UltimaPago string  `json:"ultima_pago,omitempty"`
+}
+
+// ── Reportes ────────────────────────────────────────────────────────────────
+//
+// Contrato fijado por openapi.yaml (components.schemas.ReporteResumen y
+// .TopProducto) y replicado en frontend/src/types/api.ts. Los nombres van en
+// snake_case para coincidir con el resto de la API (`metodo_pago`,
+// `creado_en`, `pagada_en`): el dashboard no es la excepción.
+
+// ReporteResumen son los KPIs de un periodo. Devuelve la foto agregada, no
+// el detalle: el frontend deriva de aquí las tarjetas del dashboard.
+//
+// TotalVendido y NumPedidos excluyen los pedidos cancelados. Un pedido
+// cancelado devolvió el stock y revirtió sus comisiones, así que contarlo
+// como venta infla la facturación.
+type ReporteResumen struct {
+	TotalVendido         float64 `json:"total_vendido"`
+	NumPedidos           int     `json:"num_pedidos"`
+	TicketPromedio       float64 `json:"ticket_promedio"`
+	ComisionesDevengadas float64 `json:"comisiones_devengadas"`
+}
+
+// TopProducto es una fila del ranking de productos más vendidos.
+//
+// Se agrupa por producto_id y nombre, no por el `productos` actual: el nombre
+// se copia en pedido_items como foto histórica del momento de la compra, que
+// es justo lo que un reporte de ventas debe mostrar.
+type TopProducto struct {
+	ProductoID int     `json:"producto_id"`
+	Nombre     string  `json:"nombre"`
+	Unidades   int     `json:"unidades"`
+	Ingresos   float64 `json:"ingresos"`
+}
+
+// TopReferido es una fila del ranking de distribuidores.
+//
+// Ventas viene del contador `referidos.ventas` (acumulado atribuido) y
+// Comisiones del ledger real. No son el mismo número a propósito: el
+// contador puede ir un instante desfasado (se actualiza best-effort tras el
+// commit), el ledger no.
+type TopReferido struct {
+	ReferidoID int     `json:"referido_id"`
+	Codigo     string  `json:"codigo"`
+	Nombre     string  `json:"nombre"`
+	Ventas     float64 `json:"ventas"`
+	Comisiones float64 `json:"comisiones"`
 }
