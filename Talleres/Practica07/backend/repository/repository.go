@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,29 +14,22 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"multicatalogo-backend/domain"
-	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/interfaces"
+	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/models"
 )
 
 // Repository implementa interfaces.DBRepository.
-// Sprint F2: el catálogo de productos sale del slice en memoria y pasa a
-// PostgreSQL (tabla `productos`). La red sigue siendo mock hasta que otro
-// sprint la migre.
+//
+// La red multinivel ya no vive en memoria: tanto la vista global como el
+// subárbol personal se reconstruyen desde la tabla `referidos` con una CTE
+// recursiva. El slice `red` que quedaba como mock fue eliminado en Sprint 1.
 type Repository struct {
-	db  *sql.DB
-	red []models.Referido
+	db *sql.DB
 }
 
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{
-		db: db,
-		red: []models.Referido{
-			{ID: 1, Codigo: "MOCK01"},
-			{ID: 2, Codigo: "MOCK02"},
-			{ID: 3, Codigo: "MOCK03"},
-		},
-	}
+	return &Repository{db: db}
 }
 
 // ─────────────────────────── Auth (F1) ───────────────────────────
@@ -214,6 +208,29 @@ func (r *Repository) GetUsuarioByCodigoRef(codigo string) (*models.Referido, err
 		return nil, fmt.Errorf("error consultando código de referido: %w", err)
 	}
 	return &ref, nil
+}
+
+// GetReferidoIDByUsuario devuelve el nodo de red del usuario, o nil si
+// todavía no tiene (se registró sin código de referido).
+func (r *Repository) GetReferidoIDByUsuario(usuarioID int) (*int, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	var refID sql.NullInt64
+	err := r.db.QueryRow(
+		`SELECT referido_id FROM usuarios WHERE id = $1`, usuarioID,
+	).Scan(&refID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, models.ErrUsuarioNoEncontrado
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error consultando el referido del usuario %d: %w", usuarioID, err)
+	}
+	if !refID.Valid {
+		return nil, nil
+	}
+	v := int(refID.Int64)
+	return &v, nil
 }
 
 // ─────────────────────────── Catálogo / Red ───────────────────────────
@@ -460,41 +477,137 @@ func (r *Repository) SoftDeleteProducto(id int) error {
 	return nil
 }
 
-func (r *Repository) GetNetwork() []models.Referido {
-	return r.red
+// ─────────────────────────── Red multinivel (Sprint 1) ───────────────────────
+//
+// Ambas vistas devuelven la lista PLANA de nodos; el ensamblado a árbol lo
+// hace domain.ConstruirArbol (puro, testeable sin I/O).
+
+// maxNivelesRed acota la profundidad de la CTE. El schema no impide que
+// parent_id forme un lazo; sin este tope, un ciclo convertiría la consulta
+// recursiva en un bucle infinito (UNION ALL no deduplica porque la columna
+// `nivel` cambia en cada vuelta).
+const maxNivelesRed = 20
+
+// columnasRed es la proyección compartida por las dos consultas.
+const columnasRed = `COALESCE(u.nombre, r.codigo) AS nombre`
+
+// GetRedGlobal devuelve TODOS los nodos del árbol. Es la vista de
+// administración (GET /api/red): la usa el admin para ver la red completa.
+// El nivel de cada nodo lo recalcula domain.ConstruirArbol, no la consulta.
+func (r *Repository) GetRedGlobal() ([]domain.NodoPlano, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	return r.consultarRed(
+		`SELECT r.id, r.codigo, r.parent_id, r.usuario_id, r.ventas, ` + columnasRed + `
+		   FROM referidos r
+		   LEFT JOIN usuarios u ON u.id = r.usuario_id
+		  ORDER BY r.id`,
+	)
+}
+
+// GetRedPropia devuelve el subárbol que cuelga del nodo del usuario indicado
+// (el `referido_id` de `usuarios`). Es lo que responde GET /api/red/mia: cada
+// usuario ve SU red, no la del seed completo.
+//
+// El ancla es referidos.usuario_id = $1, de modo que el resultado empieza en el
+// propio nodo y `nivel` es la distancia relativa al usuario.
+//
+// Si el usuario todavía no tiene nodo (referido_id NULL) devuelve un slice
+// vacío y error nil: no es un fallo, es "todavía no tengo red".
+// El ancla es `usuarios.referido_id` (la FK declarada en 002_backoffice), no
+// la columna inversa referidos.usuario_id: el vínculo autoritativo va de la
+// persona a su nodo, y anclar por el otro lado exigiría que ese campo
+// estuviera retroalimentado en todas las filas.
+func (r *Repository) GetRedPropia(usuarioID int) ([]domain.NodoPlano, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	return r.consultarRed(
+		`WITH RECURSIVE arbol AS (
+		     SELECT r.id, r.codigo, r.parent_id, r.usuario_id, r.ventas,
+		            COALESCE(u.nombre, r.codigo) AS nombre,
+		            0 AS nivel
+		       FROM referidos r
+		       LEFT JOIN usuarios u ON u.id = r.usuario_id
+		      WHERE r.id = (SELECT referido_id FROM usuarios WHERE id = $1)
+		     UNION ALL
+		     SELECT r.id, r.codigo, r.parent_id, r.usuario_id, r.ventas,
+		            COALESCE(u.nombre, r.codigo) AS nombre,
+		            a.nivel + 1
+		       FROM referidos r
+		       LEFT JOIN usuarios u ON u.id = r.usuario_id
+		       JOIN arbol a ON r.parent_id = a.id
+		      WHERE a.nivel < $2
+		 )
+		 SELECT id, codigo, parent_id, usuario_id, ventas, nombre
+		   FROM arbol
+		  ORDER BY nivel, id`,
+		usuarioID, maxNivelesRed,
+	)
+}
+
+// consultarRed ejecuta la consulta y proyecta las filas a domain.NodoPlano.
+// `ventas` es NUMERIC en Postgres: se lee como string y se convierte para no
+// arrastrar el redondeo de NUMERIC a float en la capa de scan.
+func (r *Repository) consultarRed(query string, args ...interface{}) ([]domain.NodoPlano, error) {
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando la red: %w", err)
+	}
+	defer rows.Close()
+
+	nodos := make([]domain.NodoPlano, 0)
+	for rows.Next() {
+		var (
+			n      domain.NodoPlano
+			ventas string
+		)
+		if err := rows.Scan(&n.ID, &n.Codigo, &n.ParentID, &n.UsuarioID, &ventas, &n.Nombre); err != nil {
+			return nil, fmt.Errorf("error leyendo nodo de la red: %w", err)
+		}
+		v, convErr := strconv.ParseFloat(ventas, 64)
+		if convErr != nil {
+			return nil, fmt.Errorf("ventas inválidas en el nodo %d: %w", n.ID, convErr)
+		}
+		n.Ventas = v
+		nodos = append(nodos, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo la red: %w", err)
+	}
+	return nodos, nil
 }
 
 // ─────────────────────────── Pedidos (F3) ───────────────────────────
 
 // CreatePedidoConUsuario ejecuta una transacción ACID que:
+//  0. Bloquea cada producto con SELECT ... FOR UPDATE y lee su PRECIO REAL.
 //  1. INSERT en `pedidos` con email_usuario + usuario_id + total +
-//     metodo_pago. El estado toma el default del schema ('pendiente').
-//  2. INSERT en `pedido_items` por cada producto del carrito.
-//  3. SELECT FOR UPDATE de cada producto y descuento de stock con CHECK
-//     stock >= 0 (si no hay stock suficiente devuelve
-//     ErrStockInsuficiente — ROLLBACK).
-//  4. Relee la cabecera + items y devuelve *PedidoDetalle para que el
+//     metodo_pago + los datos de envío. El estado toma el default del schema
+//     ('pendiente').
+//  2. INSERT en `pedido_items` por cada producto del carrito, copiando el
+//     nombre y el precio de la fila bloqueada.
+//  3. UPDATE de stock condicionado a stock >= cantidad (si no hay stock
+//     suficiente devuelve ErrProductoNoEncontrado — ROLLBACK).
+//  4. INSERT del ledger de comisiones en la MISMA transacción.
+//  5. Relee la cabecera + items y devuelve *PedidoDetalle para que el
 //     controller lo retorne al cliente.
 //
-// El parámetro usuarioID viene del JWT (sub). email_usuario se sigue
-// guardando por compatibilidad con el FE legacy y porque la columna
-// sigue siendo NOT NULL en el schema.
+// usuarioID y req.EmailUsuario vienen del JWT (sub), nunca del body.
 //
-// El total se calcula server-side desde los precios y cantidades de
-// req.Items para que el cliente no pueda inflar el importe (no usamos
-// el total del request).
-func (r *Repository) CreatePedidoConUsuario(req models.CheckoutRequest, usuarioID int) (*models.PedidoDetalle, error) {
+// Sobre el total: se calcula con los precios LEÍDOS DE LA BASE en el paso 0,
+// no con los del body. El precio que manda el cliente es un dato no confiable:
+// sin este paso, enviar `{"precio": 0.01}` en una línea del carrito compraría
+// el producto por un céntimo y el ledger repartiría comisiones sobre esa base.
+// El paso 0 toma además el lock de las filas, así que el descuento de stock
+// del paso 3 no puede competir con otra compra concurrente.
+func (r *Repository) CreatePedidoConUsuario(req dto.CheckoutRequest, usuarioID int) (*models.PedidoDetalle, error) {
 	if r.db == nil {
 		return nil, errors.New("base de datos no disponible")
 	}
 	if len(req.Items) == 0 {
 		return nil, errors.New("carrito vacío")
-	}
-
-	// Calcular total server-side (defensa contra tampering del cliente).
-	var total float64
-	for _, item := range req.Items {
-		total += item.Precio * float64(item.Cantidad)
 	}
 
 	tx, err := r.db.Begin()
@@ -503,34 +616,67 @@ func (r *Repository) CreatePedidoConUsuario(req models.CheckoutRequest, usuarioI
 	}
 	defer tx.Rollback()
 
-	// Paso 1: INSERT cabecera (email_usuario + usuario_id). El estado lo
-	// pone el default 'pendiente' del schema.
+	// Paso 0: precio real + lock de cada producto del carrito.
+	//
+	// El lock va aquí y no en el UPDATE del paso 3 porque hace falta el precio
+	// ANTES de insertar la cabecera (para el total), y el orden de los pasos
+	// tiene que ser el mismo dentro y fuera de la función.
+	precios := make(map[int]float64, len(req.Items))
+	nombres := make(map[int]string, len(req.Items))
+	var total float64
+	for _, item := range req.Items {
+		var precio float64
+		var nombre string
+		err := tx.QueryRow(
+			`SELECT nombre, precio FROM productos
+			  WHERE id = $1 AND activo = true
+			  FOR UPDATE`,
+			item.ID,
+		).Scan(&nombre, &precio)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, fmt.Errorf("%w: producto %d inexistente o inactivo",
+					models.ErrProductoNoEncontrado, item.ID)
+			}
+			return nil, fmt.Errorf("error bloqueando producto %d: %w", item.ID, err)
+		}
+		precios[item.ID] = precio
+		nombres[item.ID] = nombre
+		total += precio * float64(item.Cantidad)
+	}
+
+	// Paso 1: INSERT cabecera (identidad + envío). El estado lo pone el
+	// default 'pendiente' del schema.
 	var pedidoID int
 	err = tx.QueryRow(
-		`INSERT INTO pedidos (email_usuario, usuario_id, total, metodo_pago)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO pedidos
+		    (email_usuario, usuario_id, total, metodo_pago, direccion, ciudad, telefono)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id`,
-		req.Email, usuarioID, total, req.MetodoPago,
+		req.EmailUsuario, usuarioID, total, req.MetodoPago,
+		req.Direccion, req.Ciudad, req.Telefono,
 	).Scan(&pedidoID)
 	if err != nil {
 		return nil, fmt.Errorf("error insertando pedido: %w", err)
 	}
 
-	// Paso 2: INSERT items.
+	// Paso 2: INSERT items. Nombre y precio son la foto histórica del
+	// catálogo en el momento de la compra, tomados de la fila bloqueada.
 	for _, item := range req.Items {
 		_, err = tx.Exec(
 			`INSERT INTO pedido_items (pedido_id, producto_id, nombre, precio, cantidad)
 			 VALUES ($1, $2, $3, $4, $5)`,
-			pedidoID, item.ID, item.Nombre, item.Precio, item.Cantidad,
+			pedidoID, item.ID, nombres[item.ID], precios[item.ID], item.Cantidad,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error insertando item %d: %w", item.ID, err)
 		}
 	}
 
-	// Paso 3: descontar stock con SELECT FOR UPDATE. Si la fila existe
-	// pero stock < cantidad, la actualización devuelve 0 filas y
-	// reportamos ErrStockInsuficiente.
+	// Paso 3: descontar stock. Las filas ya están bloqueadas por el paso 0,
+	// así que la condición stock >= cantidad no puede perder la carrera contra
+	// otra compra. Si no cumple, la actualización afecta 0 filas y se aborta
+	// con ErrProductoNoEncontrado (el cliente ve un 409 STOCK_INSUFICIENTE).
 	for _, item := range req.Items {
 		res, err := tx.Exec(
 			`UPDATE productos
@@ -552,7 +698,21 @@ func (r *Repository) CreatePedidoConUsuario(req models.CheckoutRequest, usuarioI
 		}
 	}
 
-	// Paso 4: releer detalle (cabecera + items) para devolverlo al FE.
+	// Paso 4: ledger de comisiones DENTRO de la misma transacción.
+	//
+	// Es el punto que cambió en Sprint 2. Antes la goroutine post-COMMIT
+	// insertaba en `comisiones`: si ese INSERT fallaba, el pedido quedaba
+	// vendido y la comisión sin existir, sin ninguna forma de saberlo. Ahora
+	// el ledger es parte de la unidad transaccional — o entra con el pedido,
+	// o no entra ninguno de los dos.
+	//
+	// Lo que sí queda fuera es el contador `referidos.ventas`, que es una
+	// lectura rápida de conveniencia (ver ActualizarVentasUpline).
+	if err := insertarComisionesTx(tx, pedidoID, usuarioID, req.EmailUsuario, total); err != nil {
+		return nil, err
+	}
+
+	// Paso 5: releer detalle (cabecera + items) para devolverlo al FE.
 	detalle, err := selectPedidoDetalleTx(tx, pedidoID)
 	if err != nil {
 		return nil, err
@@ -613,12 +773,12 @@ func selectPedidoDetalleTx(tx *sql.Tx, pedidoID int) (*models.PedidoDetalle, err
 	return &d, nil
 }
 
-// GetMisPedidos devuelve los pedidos del usuario paginados.
-// Orden: más recientes primero (created_at DESC).
-func (r *Repository) GetMisPedidos(usuarioID int, page, limit int) ([]models.PedidoResumen, int, error) {
-	if r.db == nil {
-		return nil, 0, errors.New("base de datos no disponible")
-	}
+// normalizarPagina aplica los defaults y el tope de los listados paginados:
+// página 1-based, 20 filas por defecto, 100 como máximo.
+//
+// Centralizarlo evita que cada endpoint interprete `?page=0` o `?limit=9999`
+// a su manera — que es como un cliente termina pidiendo la tabla entera.
+func normalizarPagina(page, limit int) (int, int) {
 	if page <= 0 {
 		page = 1
 	}
@@ -628,6 +788,16 @@ func (r *Repository) GetMisPedidos(usuarioID int, page, limit int) ([]models.Ped
 	if limit > 100 {
 		limit = 100
 	}
+	return page, limit
+}
+
+// GetMisPedidos devuelve los pedidos del usuario paginados.
+// Orden: más recientes primero (created_at DESC).
+func (r *Repository) GetMisPedidos(usuarioID int, page, limit int) ([]models.PedidoResumen, int, error) {
+	if r.db == nil {
+		return nil, 0, errors.New("base de datos no disponible")
+	}
+	page, limit = normalizarPagina(page, limit)
 
 	rows, err := r.db.Query(
 		`SELECT id, usuario_id, total, estado, created_at,
@@ -785,11 +955,11 @@ func (r *Repository) GetPedidoDetalle(id int) (*models.PedidoDetalle, error) {
 //  3. UPDATE pedidos SET estado = $nuevo.
 //  4. Si nuevo == cancelado:
 //     - Por cada pedido_item, devuelve stock: UPDATE productos SET
-//       stock = stock + item.cantidad WHERE id = item.producto_id.
+//     stock = stock + item.cantidad WHERE id = item.producto_id.
 //     - UPDATE comisiones SET estado='revertida' WHERE pedido_id=$id
-//       AND estado IN ('pendiente','aprobada'). Las comisiones ya
-//       'pagadas' NO se tocan (decisión de negocio: una vez pagadas al
-//       MLM, revertir requiere un flujo de clawback fuera de F3).
+//     AND estado IN ('pendiente','aprobada'). Las comisiones ya
+//     'pagadas' NO se tocan (decisión de negocio: una vez pagadas al
+//     MLM, revertir requiere un flujo de clawback fuera de F3).
 //
 // Devuelve models.ErrPedidoNoEncontrado si el id no existe.
 func (r *Repository) CambiarEstadoPedido(id int, nuevoEstado domain.EstadoPedido) error {
@@ -843,7 +1013,8 @@ func (r *Repository) CambiarEstadoPedido(id int, nuevoEstado domain.EstadoPedido
 		); err != nil {
 			return fmt.Errorf("error devolviendo stock al cancelar pedido %d: %w", id, err)
 		}
-		// 4b) Revertir comisiones pendientes/aprobadas. Pagadas no se tocan.
+		// 4b) Revertir comisiones pendientes/aprobadas. Pagadas no se tocan:
+		// el dinero ya salió y la reversión es un asunto contable aparte.
 		if _, err := tx.Exec(
 			`UPDATE comisiones
 			    SET estado = 'revertida'
@@ -852,6 +1023,25 @@ func (r *Repository) CambiarEstadoPedido(id int, nuevoEstado domain.EstadoPedido
 			id,
 		); err != nil {
 			return fmt.Errorf("error revirtiendo comisiones del pedido %d: %w", id, err)
+		}
+		// 4c) Descontar el contador `ventas` de los mismos nodos. El
+		// checkout locredited dentro de su propia transacción; sin este
+		// paso el árbol seguiría mostrando ventas de una compra anulada y
+		// el cache quedaría mintiendo.
+		if _, err := tx.Exec(
+			`WITH cm AS (
+			     SELECT referido_id, SUM(monto) AS total
+			       FROM comisiones
+			  WHERE pedido_id = $1
+			  GROUP BY referido_id
+			 )
+			 UPDATE referidos r
+			    SET ventas = r.ventas - cm.total
+			   FROM cm
+			  WHERE r.id = cm.referido_id`,
+			id,
+		); err != nil {
+			return fmt.Errorf("error revirtiendo ventas del pedido %d: %w", id, err)
 		}
 	}
 
@@ -862,68 +1052,741 @@ func (r *Repository) CambiarEstadoPedido(id int, nuevoEstado domain.EstadoPedido
 	return nil
 }
 
-// ─────────────────────────── Comisiones (F1 — upline walk real) ───────────────────────────
+// ─────────────────────────── Ledger de comisiones ───────────────────────────
 
-// ActualizarComisiones recorre el árbol de referidos hasta 3 niveles
-// hacia arriba del usuario que compró y registra una comisión por cada
-// nodo referente, con los porcentajes 10% / 5% / 2%.
+// cadenaUplineTx devuelve los ids de `referidos` que corresponden a los
+// niveles 1..N por encima del nodo del usuario, en orden de cercanía.
 //
-// Notas sobre el modelo:
+// El ancla es el PADRE del nodo del usuario, no el nodo en sí: el nivel 1 de
+// una comisión es el referente, y el comprador nunca se acredita a sí mismo.
 //
-//   - pedidoID es el id del pedido recién creado por CreatePedidoConUsuario.
-//     F3 enlaza la comisión al pedido para que CambiarEstadoPedido pueda
-//     revertirla al cancelar (UPDATE … WHERE pedido_id = $1).
-//   - La operación se hace best-effort: si cualquier nivel falla (por
-//     ejemplo FK constraint al cerrar la conexión), se loguea y se
-//     abandona sin afectar la respuesta HTTP al cliente.
-func (r *Repository) ActualizarComisiones(pedidoID int, total float64, emailUsuario string) {
-	if r.db == nil {
-		log.Printf("[Goroutine] DB no disponible, comisiones no actualizadas")
-		return
+// Se usa una CTE recursiva en lugar de un bucle de consultas porque devuelve
+// una sola ida a la base. El tope de profundidad protege contra ciclos de
+// parent_id, igual que en la construcción del árbol.
+func cadenaUplineTx(tx *sql.Tx, usuarioID int, niveles int) ([]int, error) {
+	rows, err := tx.Query(
+		`WITH RECURSIVE upline AS (
+		     SELECT r.id, r.parent_id, 1 AS nivel
+		       FROM usuarios u
+		       JOIN referidos propio ON propio.id = u.referido_id
+		       JOIN referidos r      ON r.id = propio.parent_id
+		      WHERE u.id = $1
+		     UNION ALL
+		     SELECT r.id, r.parent_id, up.nivel + 1
+		       FROM referidos r
+		       JOIN upline up ON r.id = up.parent_id
+		      WHERE up.nivel < $2
+		 )
+		 SELECT id FROM upline ORDER BY nivel`,
+		usuarioID, niveles,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando la cadena de upline: %w", err)
 	}
+	defer rows.Close()
 
-	// 1) Obtener el nodo de referido del usuario.
-	var refID sql.NullInt64
-	err := r.db.QueryRow(
-		`SELECT referido_id FROM usuarios WHERE email = $1`,
-		emailUsuario,
-	).Scan(&refID)
-	if err != nil || !refID.Valid {
-		log.Printf("[Comision] usuario %s sin referido, no hay upline", emailUsuario)
-		return
-	}
-
-	porcentajes := []float64{0.10, 0.05, 0.02}
-	current := int(refID.Int64)
-	for nivel, pct := range porcentajes {
-		// Subir un nivel: el "parent" del nodo actual es el nodo del referente.
-		var parentID sql.NullInt64
-		err := r.db.QueryRow(
-			`SELECT parent_id FROM referidos WHERE id = $1`,
-			current,
-		).Scan(&parentID)
-		if err != nil || !parentID.Valid {
-			// Llegamos a la raíz o el nodo no tiene parent: fin del upline.
-			return
+	cadena := make([]int, 0, niveles)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("error leyendo la cadena de upline: %w", err)
 		}
-		current = int(parentID.Int64)
+		cadena = append(cadena, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo la cadena de upline: %w", err)
+	}
+	return cadena, nil
+}
 
-		comision := total * pct
-		// F3: pedido_id ya NO es NULL — se enlaza con el pedido recién
-		// creado para poder revertir al cancelar.
-		_, err = r.db.Exec(
+// insertarComisionesTx escribe el ledger del pedido dentro de la transacción
+// abierta. Si algo falla, el llamador hace ROLLBACK y el pedido tampoco existe.
+func insertarComisionesTx(tx *sql.Tx, pedidoID, usuarioID int, email string, total float64) error {
+	cadena, err := cadenaUplineTx(tx, usuarioID, domain.MaxNivelesComision)
+	if err != nil {
+		return err
+	}
+	// Sin upline no hay comisión: es un resultado válido (compra de raíz).
+	comisiones := domain.RepartirComisiones(total, cadena, domain.TasasComision)
+	for _, c := range comisiones {
+		if _, err := tx.Exec(
 			`INSERT INTO comisiones
 			   (nivel, monto, origen_email, pedido_id, referido_id, porcentaje, estado)
 			 VALUES ($1, $2, $3, $4, $5, $6, 'pendiente')`,
-			nivel+1, comision, emailUsuario, pedidoID, current, pct*100,
-		)
-		if err != nil {
-			log.Printf("[Comision] error nivel %d: %v", nivel+1, err)
-			return
+			c.Nivel, c.Monto, email, pedidoID, c.ReferidoID, c.Porcentaje,
+		); err != nil {
+			return fmt.Errorf("error registrando la comisión de nivel %d: %w", c.Nivel, err)
 		}
 	}
-	log.Printf("[Comision] upline walk completado para %s (pedido=%d, total=%.2f)",
-		emailUsuario, pedidoID, total)
+	log.Printf("[DB] Pedido #%d → %d comisiones en el ledger (total %.2f)",
+		pedidoID, len(comisiones), domain.TotalComisiones(comisiones))
+	return nil
+}
+
+// ActualizarVentasUpline suma el total del pedido al contador `ventas` de
+// cada nodo del upline.
+//
+// Es un cache de lectura, NO la fuente de verdad del dinero: el ledger
+// (`comisiones`) lo es. Por eso va fuera de la transacción y en goroutine —
+// si falla, la venta sigue siendo válida y sólo el contador queda atraso.
+// Losing una actualización de un contador es un problema distinto (y mucho
+// menor) que perder una fila del ledger.
+func (r *Repository) ActualizarVentasUpline(emailUsuario string, total float64) error {
+	if r.db == nil {
+		return errors.New("base de datos no disponible")
+	}
+
+	var refID sql.NullInt64
+	err := r.db.QueryRow(
+		`SELECT referido_id FROM usuarios WHERE email = $1`, emailUsuario,
+	).Scan(&refID)
+	if err != nil || !refID.Valid {
+		// El usuario no tiene nodo (compra desde la raíz): no hay a quién
+		// acreditarle nada. No es un error.
+		return nil
+	}
+
+	// Un solo UPDATE que sube los 3 niveles del upline de una vez.
+	// El ancla es el padre del nodo del comprador: el vendedor de sí mismo
+	// no existe. Ojo: la CTE debe proyectar parent_id en el ancla, porque el
+	// término recursivo lee `up.parent_id` — sin esa columna Postgres
+	// responde "column does not exist" en tiempo de ejecución.
+	_, err = r.db.Exec(
+		`WITH RECURSIVE upline AS (
+		     SELECT r.id, r.parent_id, 1 AS nivel
+		       FROM referidos propio
+		       JOIN referidos r ON r.id = propio.parent_id
+		      WHERE propio.id = $1
+		     UNION ALL
+		     SELECT r.id, r.parent_id, up.nivel + 1
+		       FROM referidos r JOIN upline up ON r.id = up.parent_id
+		      WHERE up.nivel < $3
+		 )
+		 UPDATE referidos SET ventas = ventas + $2
+		  WHERE id IN (SELECT id FROM upline)`,
+		refID.Int64, total, domain.MaxNivelesComision,
+	)
+	if err != nil {
+		return fmt.Errorf("error actualizando ventas del upline: %w", err)
+	}
+	return nil
+}
+
+// GetComisiones devuelve las filas del ledger que casan con el filtro,
+// paginadas, junto con el total de filas que cumplen el filtro (no el de la
+// página). ReferidoID nil = todos los distribuidores (uso admin).
+func (r *Repository) GetComisiones(filtro interfaces.ComisionFiltro) ([]models.Comision, int, error) {
+	if r.db == nil {
+		return nil, 0, errors.New("base de datos no disponible")
+	}
+	page, limit := normalizarPagina(filtro.Page, filtro.Limit)
+
+	where := "WHERE 1=1"
+	args := []interface{}{}
+	if filtro.ReferidoID != nil {
+		args = append(args, *filtro.ReferidoID)
+		where += fmt.Sprintf(" AND referido_id = $%d", len(args))
+	}
+	if filtro.Estado != "" {
+		args = append(args, filtro.Estado)
+		where += fmt.Sprintf(" AND estado = $%d", len(args))
+	}
+
+	var total int
+	if err := r.db.QueryRow(
+		`SELECT count(*) FROM comisiones `+where, args...,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("error contando comisiones: %w", err)
+	}
+
+	args = append(args, limit, (page-1)*limit)
+	rows, err := r.db.Query(
+		`SELECT id, pedido_id, referido_id, nivel, porcentaje, monto, estado, created_at
+		   FROM comisiones `+where+fmt.Sprintf(
+			` ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`,
+			len(args)-1, len(args)),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error consultando comisiones: %w", err)
+	}
+	defer rows.Close()
+
+	comisiones := make([]models.Comision, 0)
+	for rows.Next() {
+		var c models.Comision
+		var pedidoID, referidoID sql.NullInt64
+		var porcentaje, monto string
+		var creado time.Time
+		if err := rows.Scan(&c.ID, &pedidoID, &referidoID, &c.Nivel,
+			&porcentaje, &monto, &c.Estado, &creado); err != nil {
+			return nil, 0, fmt.Errorf("error escaneando comisión: %w", err)
+		}
+		// NUMERIC llega como texto desde lib/pq: se convierte con ParseFloat
+		// en vez de dejar que database/sql caste y trunque.
+		if c.Porcentaje, err = strconv.ParseFloat(porcentaje, 64); err != nil {
+			return nil, 0, fmt.Errorf("porcentaje inválido en la comisión %d: %w", c.ID, err)
+		}
+		if c.Monto, err = strconv.ParseFloat(monto, 64); err != nil {
+			return nil, 0, fmt.Errorf("monto inválido en la comisión %d: %w", c.ID, err)
+		}
+		if pedidoID.Valid {
+			v := int(pedidoID.Int64)
+			c.PedidoID = &v
+		}
+		if referidoID.Valid {
+			v := int(referidoID.Int64)
+			c.ReferidoID = &v
+		}
+		c.CreadoEn = creado.UTC().Format(time.RFC3339)
+		comisiones = append(comisiones, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error recorriendo comisiones: %w", err)
+	}
+	return comisiones, total, nil
+}
+
+// GetTotalesComisiones agrupa el ledger por estado. Si referidoID no es nil,
+// sólo totaliza ese distribuidor.
+//
+// Es la consulta que responde "¿cuánto le debo a esta persona?" y la que
+// usará POST /api/admin/liquidaciones para decidir si hay algo que pagar.
+func (r *Repository) GetTotalesComisiones(referidoID *int) ([]models.ComisionTotal, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	query := `SELECT estado, COALESCE(SUM(monto), 0), count(*)
+	            FROM comisiones`
+	args := []interface{}{}
+	if referidoID != nil {
+		query += ` WHERE referido_id = $1`
+		args = append(args, *referidoID)
+	}
+	query += ` GROUP BY estado ORDER BY estado`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("error totalizando comisiones: %w", err)
+	}
+	defer rows.Close()
+
+	totales := make([]models.ComisionTotal, 0, 4)
+	for rows.Next() {
+		var t models.ComisionTotal
+		var monto string
+		if err := rows.Scan(&t.Estado, &monto, &t.Cantidad); err != nil {
+			return nil, fmt.Errorf("error escaneando total: %w", err)
+		}
+		v, convErr := strconv.ParseFloat(monto, 64)
+		if convErr != nil {
+			return nil, fmt.Errorf("total inválido para %q: %w", t.Estado, convErr)
+		}
+		t.Total = v
+		totales = append(totales, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo totales: %w", err)
+	}
+	return totales, nil
+}
+
+// ─────────────────────────── Liquidaciones ───────────────────────────────────
+
+// Liquidar paga todas las comisiones 'pendiente' de un distribuidor en una
+// única transacción.
+//
+// Todo el dance es por concurrencia: dos admins que pulsan "liquidar" a la vez
+// no pueden pagar dos veces lo mismo. El bloqueo SELECT … FOR UPDATE sobre
+// las comisiones pendientes serializa a los dos; el segundo ve el conjunto
+// vacío y recibe ErrNadaQueLiquidar.
+//
+// El orden importa: se bloquean y suman las comisiones PRIMERO, se inserta la
+// liquidación con ese total, y sólo después se marcan las comisiones como
+// pagadas enlazándolas a esa liquidación. Si algo falla, el ROLLBACK deja las
+// comisiones como estaban.
+func (r *Repository) Liquidar(referidoID int) (*models.Liquidacion, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("error iniciando transacción de liquidación: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1) Bloquear las comisiones pendientes del distribuidor.
+	//    El FOR UPDATE es lo que impide la doble liquidación.
+	rows, err := tx.Query(
+		`SELECT id, COALESCE(monto, 0)
+		   FROM comisiones
+		  WHERE referido_id = $1 AND estado = 'pendiente'
+		  ORDER BY id
+		  FOR UPDATE`,
+		referidoID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error bloqueando comisiones del referido %d: %w", referidoID, err)
+	}
+	var (
+		ids   []int
+		total float64
+	)
+	for rows.Next() {
+		var (
+			id    int
+			monto string
+		)
+		if err := rows.Scan(&id, &monto); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("error leyendo comisiones a liquidar: %w", err)
+		}
+		v, convErr := strconv.ParseFloat(monto, 64)
+		if convErr != nil {
+			rows.Close()
+			return nil, fmt.Errorf("monto inválido en la comisión %d: %w", id, convErr)
+		}
+		ids = append(ids, id)
+		total += v
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo comisiones a liquidar: %w", err)
+	}
+
+	if len(ids) == 0 {
+		return nil, models.ErrNadaQueLiquidar
+	}
+
+	// 2) Registrar el pago.
+	var liq models.Liquidacion
+	var creado, pagada time.Time
+	err = tx.QueryRow(
+		`INSERT INTO liquidaciones (referido_id, total, periodo, estado, pagada_en)
+		 VALUES ($1, $2, $3, 'pagada', NOW())
+		 RETURNING id, referido_id, total, periodo, estado, creado_en, pagada_en`,
+		referidoID, total, domain.PeriodoActual(),
+	).Scan(&liq.ID, &liq.ReferidoID, &liq.Total, &liq.Periodo, &liq.Estado, &creado, &pagada)
+	if err != nil {
+		return nil, fmt.Errorf("error registrando la liquidación: %w", err)
+	}
+	liq.CreadoEn = creado.UTC().Format(time.RFC3339)
+	pagadaStr := pagada.UTC().Format(time.RFC3339)
+	liq.PagadaEn = &pagadaStr
+
+	// 3) Marcar las comisiones como pagadas y enlazarlas al pago.
+	if _, err := tx.Exec(
+		`UPDATE comisiones
+		    SET estado = 'pagada', liquidacion_id = $1
+		  WHERE id = ANY($2)`,
+		liq.ID, pq.Array(ids),
+	); err != nil {
+		return nil, fmt.Errorf("error marcando comisiones como pagadas: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("error en commit de la liquidación: %w", err)
+	}
+	log.Printf("[DB] Liquidación #%d: referido=%d total=%.2f (%d comisiones)",
+		liq.ID, referidoID, liq.Total, len(ids))
+	return &liq, nil
+}
+
+// GetLiquidaciones devuelve el historial de pagos, paginado.
+func (r *Repository) GetLiquidaciones(page, limit int) ([]models.Liquidacion, int, error) {
+	return r.consultarLiquidaciones(nil, page, limit)
+}
+
+// GetLiquidacionesDe devuelve el historial de un distribuidor concreto.
+func (r *Repository) GetLiquidacionesDe(referidoID, page, limit int) ([]models.Liquidacion, int, error) {
+	return r.consultarLiquidaciones(&referidoID, page, limit)
+}
+
+func (r *Repository) consultarLiquidaciones(referidoID *int, page, limit int) ([]models.Liquidacion, int, error) {
+	if r.db == nil {
+		return nil, 0, errors.New("base de datos no disponible")
+	}
+	page, limit = normalizarPagina(page, limit)
+
+	where := ""
+	args := []interface{}{}
+	if referidoID != nil {
+		args = append(args, *referidoID)
+		where = "WHERE referido_id = $1"
+	}
+
+	var total int
+	if err := r.db.QueryRow(
+		`SELECT count(*) FROM liquidaciones `+where, args...,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("error contando liquidaciones: %w", err)
+	}
+
+	args = append(args, limit, (page-1)*limit)
+	rows, err := r.db.Query(
+		`SELECT id, referido_id, total, COALESCE(periodo,''), estado, creado_en, pagada_en
+		   FROM liquidaciones `+where+fmt.Sprintf(
+			` ORDER BY id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error consultando liquidaciones: %w", err)
+	}
+	defer rows.Close()
+
+	liquidaciones := make([]models.Liquidacion, 0)
+	for rows.Next() {
+		var l models.Liquidacion
+		var totalStr string
+		var pagada sql.NullTime
+		if err := rows.Scan(&l.ID, &l.ReferidoID, &totalStr, &l.Periodo,
+			&l.Estado, &l.CreadoEn, &pagada); err != nil {
+			return nil, 0, fmt.Errorf("error escaneando liquidación: %w", err)
+		}
+		v, convErr := strconv.ParseFloat(totalStr, 64)
+		if convErr != nil {
+			return nil, 0, fmt.Errorf("total inválido en la liquidación %d: %w", l.ID, convErr)
+		}
+		l.Total = v
+		if pagada.Valid {
+			s := pagada.Time.UTC().Format(time.RFC3339)
+			l.PagadaEn = &s
+		}
+		liquidaciones = append(liquidaciones, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error recorriendo liquidaciones: %w", err)
+	}
+	return liquidaciones, total, nil
+}
+
+// GetDeuda devuelve cuánto se le debe a cada distribuidor: la suma de sus
+// comisiones 'pendiente'. Es la consulta que alimenta la pantalla de
+// liquidación y responde "¿a quién tengo que pagarle?".
+//
+// Se hace con JOIN a referidos/usuarios para que la pantalla muestre nombre
+// y código, no ids sueltos.
+func (r *Repository) GetDeuda() ([]models.DeudaDistribuidor, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	rows, err := r.db.Query(
+		`SELECT r.id,
+		        r.codigo,
+		        COALESCE(u.nombre, r.codigo) AS nombre,
+		        COALESCE(SUM(c.monto), 0) AS total,
+		        count(c.id) AS comisiones,
+		        MAX(l.pagada_en)
+		   FROM referidos r
+		   JOIN comisiones c ON c.referido_id = r.id AND c.estado = 'pendiente'
+		   LEFT JOIN usuarios u ON u.id = r.usuario_id
+		   LEFT JOIN LATERAL (
+		        SELECT MAX(pagada_en) AS pagada_en
+		          FROM liquidaciones
+		         WHERE referido_id = r.id
+		   ) l ON true
+		  GROUP BY r.id, r.codigo, u.nombre
+		  ORDER BY total DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando la deuda: %w", err)
+	}
+	defer rows.Close()
+
+	deudas := make([]models.DeudaDistribuidor, 0)
+	for rows.Next() {
+		var d models.DeudaDistribuidor
+		var totalStr string
+		var ultima sql.NullTime
+		if err := rows.Scan(&d.ReferidoID, &d.Codigo, &d.Nombre, &totalStr,
+			&d.Comisiones, &ultima); err != nil {
+			return nil, fmt.Errorf("error escaneando la deuda: %w", err)
+		}
+		v, convErr := strconv.ParseFloat(totalStr, 64)
+		if convErr != nil {
+			return nil, fmt.Errorf("total inválido para el referido %d: %w", d.ReferidoID, convErr)
+		}
+		d.Total = v
+		if ultima.Valid {
+			d.UltimaPago = ultima.Time.UTC().Format(time.RFC3339)
+		}
+		deudas = append(deudas, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo la deuda: %w", err)
+	}
+	return deudas, nil
+}
+
+// ─────────────────────────── Reportes ───────────────────────────────────────
+//
+// Todas las consultas de esta sección excluyen los pedidos `cancelado`.
+//
+// La razón es de dinero, no de gusto: al cancelar, CambiarEstadoPedido
+// devuelve el stock y revierte las comisiones del pedido. Contarlo como
+// venta infla la facturación y las comisiones devengadas a la vez.
+
+// appendRangoFecha añade el recorte temporal a los argumentos y devuelve un
+// fragmento "AND ..." parametrizado con los placeholders correctos.
+//
+// Se reutiliza entre `pedidos` y `comisiones` porque el dashboard siempre
+// recorta las dos por el mismo periodo: si sólo se recortara una, el ticket
+// medio y las comisiones dejarían de cuadrar entre sí.
+//
+// Cada tabla usa su propio slice de argumentos porque son dos consultas
+// independientes: los placeholders empiezan en $1 en ambas.
+func appendRangoFecha(
+	args []interface{}, desde, hasta *time.Time,
+) (string, []interface{}) {
+	frag := ""
+	if desde != nil {
+		args = append(args, *desde)
+		frag += fmt.Sprintf(" AND created_at >= $%d", len(args))
+	}
+	if hasta != nil {
+		args = append(args, *hasta)
+		frag += fmt.Sprintf(" AND created_at < $%d", len(args))
+	}
+	return frag, args
+}
+
+// GetReporteResumen devuelve los KPIs del periodo.
+//
+// `ticket_promedio` se calcula en Go, no en SQL, con guarda de división por
+// cero: un periodo sin pedidos da 0, no NaN ni un 500 por división en cero.
+func (r *Repository) GetReporteResumen(filtro interfaces.ReporteFiltro) (*models.ReporteResumen, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+
+	resumen := &models.ReporteResumen{}
+
+	// Ventas y pedidos: una sola pasada sobre `pedidos`.
+	// El SUM devuelve NUMERIC, que lib/pq entrega como texto: se convierte
+	// con ParseFloat en vez de dejar que database/sql caste y trunque.
+	argsPedidos := []interface{}{}
+	rangoPedidos, argsPedidos := appendRangoFecha(argsPedidos, filtro.Desde, filtro.Hasta)
+
+	var ventasStr string
+	if err := r.db.QueryRow(
+		`SELECT COALESCE(SUM(total), 0), count(*)
+		   FROM pedidos
+		  WHERE estado <> 'cancelado'`+rangoPedidos,
+		argsPedidos...,
+	).Scan(&ventasStr, &resumen.NumPedidos); err != nil {
+		return nil, fmt.Errorf("error agregando ventas: %w", err)
+	}
+	ventas, err := strconv.ParseFloat(ventasStr, 64)
+	if err != nil {
+		return nil, fmt.Errorf("total vendido inválido %q: %w", ventasStr, err)
+	}
+	resumen.TotalVendido = ventas
+
+	// Comisiones devengadas: consulta APARTE, nunca un JOIN con `pedidos`.
+	// Unir las dos tablas en la misma fila multiplicaría `total` por el número
+	// de comisiones del pedido (hasta 3, uno por nivel del upline) y
+	// falsearía la facturación por ese factor.
+	//
+	// Se excluye 'revertida': una comisión revertida nunca se devengó.
+	// 'pendiente', 'aprobada' y 'pagada' sí cuentan — devengar no es pagar.
+	argsCom := []interface{}{}
+	rangoCom, argsCom := appendRangoFecha(argsCom, filtro.Desde, filtro.Hasta)
+
+	var comStr string
+	if err := r.db.QueryRow(
+		`SELECT COALESCE(SUM(monto), 0)
+		   FROM comisiones
+		  WHERE estado <> 'revertida'`+rangoCom,
+		argsCom...,
+	).Scan(&comStr); err != nil {
+		return nil, fmt.Errorf("error agregando comisiones devengadas: %w", err)
+	}
+	devengadas, err := strconv.ParseFloat(comStr, 64)
+	if err != nil {
+		return nil, fmt.Errorf("comisiones devengadas inválidas %q: %w", comStr, err)
+	}
+	resumen.ComisionesDevengadas = devengadas
+
+	if resumen.NumPedidos > 0 {
+		resumen.TicketPromedio = resumen.TotalVendido / float64(resumen.NumPedidos)
+	}
+
+	return resumen, nil
+}
+
+// GetTopProductos rankea por ingresos.
+//
+// Se agrupa por `pedido_items.producto_id` y no por el JOIN con `productos`:
+// el nombre en pedido_items es la foto histórica del precio y del nombre en
+// el momento de la compra, que es lo que un reporte de ventas debe mostrar.
+func (r *Repository) GetTopProductos(limit int) ([]models.TopProducto, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	limit = normalizarLimitReporte(limit)
+
+	rows, err := r.db.Query(
+		`SELECT pi.producto_id,
+		        MIN(pi.nombre),
+		        SUM(pi.cantidad),
+		        SUM(pi.cantidad * pi.precio)
+		   FROM pedido_items pi
+		   JOIN pedidos p ON p.id = pi.pedido_id
+		  WHERE p.estado <> 'cancelado'
+		  GROUP BY pi.producto_id
+		  ORDER BY SUM(pi.cantidad * pi.precio) DESC, pi.producto_id
+		  LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando top de productos: %w", err)
+	}
+	defer rows.Close()
+
+	top := make([]models.TopProducto, 0, limit)
+	for rows.Next() {
+		var t models.TopProducto
+		var ingresosStr string
+		if err := rows.Scan(&t.ProductoID, &t.Nombre, &t.Unidades, &ingresosStr); err != nil {
+			return nil, fmt.Errorf("error escaneando top de productos: %w", err)
+		}
+		v, convErr := strconv.ParseFloat(ingresosStr, 64)
+		if convErr != nil {
+			return nil, fmt.Errorf("ingresos inválidos para el producto %d: %w", t.ProductoID, convErr)
+		}
+		t.Ingresos = v
+		top = append(top, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo el top de productos: %w", err)
+	}
+	return top, nil
+}
+
+// GetTopReferidos rankea distribuidores por ventas acumuladas.
+//
+// Ventas sale del contador `referidos.ventas` (rápido, best-effort) y
+// Comisiones del ledger real (lento, exacto). Que difieran es correcto: el
+// contador se actualiza en una goroutine tras el commit del checkout, así que
+// puede ir un instante por detrás del ledger. Para auditoría hay que usar
+// /api/admin/comisiones, no este ranking.
+func (r *Repository) GetTopReferidos(limit int) ([]models.TopReferido, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	limit = normalizarLimitReporte(limit)
+
+	rows, err := r.db.Query(
+		`SELECT r.id,
+		        r.codigo,
+		        COALESCE(u.nombre, r.codigo),
+		        r.ventas,
+		        COALESCE(SUM(c.monto) FILTER (WHERE c.estado <> 'revertida'), 0)
+		   FROM referidos r
+		   LEFT JOIN usuarios u ON u.id = r.usuario_id
+		   LEFT JOIN comisiones c ON c.referido_id = r.id
+		  GROUP BY r.id, r.codigo, u.nombre, r.ventas
+		  ORDER BY r.ventas DESC, r.id
+		  LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando top de referidos: %w", err)
+	}
+	defer rows.Close()
+
+	top := make([]models.TopReferido, 0, limit)
+	for rows.Next() {
+		var t models.TopReferido
+		var ventasStr, comStr string
+		if err := rows.Scan(&t.ReferidoID, &t.Codigo, &t.Nombre, &ventasStr, &comStr); err != nil {
+			return nil, fmt.Errorf("error escaneando top de referidos: %w", err)
+		}
+		if t.Ventas, err = strconv.ParseFloat(ventasStr, 64); err != nil {
+			return nil, fmt.Errorf("ventas inválidas para el referido %d: %w", t.ReferidoID, err)
+		}
+		if t.Comisiones, err = strconv.ParseFloat(comStr, 64); err != nil {
+			return nil, fmt.Errorf("comisiones inválidas para el referido %d: %w", t.ReferidoID, err)
+		}
+		top = append(top, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo el top de referidos: %w", err)
+	}
+	return top, nil
+}
+
+// GetComisionesPendientes devuelve el ledger que aún no se ha liquidado.
+//
+// Es la lista de trabajo del admin antes de pulsar "liquidar": lo que hay
+// pendiente y por qué. No se limita por referido a propósito — la pantalla es
+// global y el admin puede liquidar a cualquiera (POST
+// /api/admin/liquidaciones).
+func (r *Repository) GetComisionesPendientes(limit int) ([]models.Comision, error) {
+	if r.db == nil {
+		return nil, errors.New("base de datos no disponible")
+	}
+	limit = normalizarLimitReporte(limit)
+
+	rows, err := r.db.Query(
+		`SELECT id, pedido_id, referido_id, nivel, porcentaje, monto, estado, created_at
+		   FROM comisiones
+		  WHERE estado = 'pendiente'
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando comisiones pendientes: %w", err)
+	}
+	defer rows.Close()
+
+	comisiones := make([]models.Comision, 0, limit)
+	for rows.Next() {
+		var c models.Comision
+		var pedidoID, referidoID sql.NullInt64
+		var porcentaje, monto string
+		var creado time.Time
+		if err := rows.Scan(&c.ID, &pedidoID, &referidoID, &c.Nivel,
+			&porcentaje, &monto, &c.Estado, &creado); err != nil {
+			return nil, fmt.Errorf("error escaneando comisión pendiente: %w", err)
+		}
+		if c.Porcentaje, err = strconv.ParseFloat(porcentaje, 64); err != nil {
+			return nil, fmt.Errorf("porcentaje inválido en la comisión %d: %w", c.ID, err)
+		}
+		if c.Monto, err = strconv.ParseFloat(monto, 64); err != nil {
+			return nil, fmt.Errorf("monto inválido en la comisión %d: %w", c.ID, err)
+		}
+		if pedidoID.Valid {
+			v := int(pedidoID.Int64)
+			c.PedidoID = &v
+		}
+		if referidoID.Valid {
+			v := int(referidoID.Int64)
+			c.ReferidoID = &v
+		}
+		c.CreadoEn = creado.UTC().Format(time.RFC3339)
+		comisiones = append(comisiones, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error recorriendo comisiones pendientes: %w", err)
+	}
+	return comisiones, nil
+}
+
+// normalizarLimitReporte acota el `?limit=` de los reportes.
+//
+// Default 10 y tope 50, los valores que fija openapi.yaml para
+// /api/reportes/top-productos y /api/reportes/top-referidos. Sin tope, un
+// `?limit=999999` convertiría un endpoint de dashboard en un volcado de tabla.
+func normalizarLimitReporte(limit int) int {
+	if limit <= 0 {
+		return 10
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
 }
 
 // isUniqueViolation devuelve true si err es una violación de unicidad de
