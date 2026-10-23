@@ -1,7 +1,7 @@
 # REQUIREMENTS CHECKLIST — MultiCatálogo
 
-> Fuente de verdad del progreso. Última actualización: **2026-10-23** (20:45)  
-> **Estado actual:** ✅ **100% implementado** — U1 + U2 + PWA completadas, listo para producción
+> Fuente de verdad del progreso. Última actualización: **2026-10-23** (21:30)  
+> **Estado actual:** ✅ **95% implementado** — U1 + U2 + PWA A/B completadas | PWA C requiere verificación navegador
 
 **Estructura:** el documento se divide en fases por **Unidad/Tema del sílabo**. Cada fase marca `[x]` si está implementada o `[ ]` si falta.
 
@@ -11,11 +11,11 @@
 
 | Ítem | Valor |
 |---|---|
-| **Hito actual** | ✅ **Unidades 1, 2 y PWA completadas** |
-| **Implementación** | **100% completada** — 24/24 endpoints, seguridad, ACID, PWA phases A/B/C, pnpm ready |
-| **Última tarea completada** | 2026-10-23 20:45: PWA Phase C validation (build + preview, fix workbox-window externalization) |
-| **Siguiente tarea** | **Opcional:** Mejoras opcionales (I1-I4, 5-8h); **Luego:** U3 SaaS |
-| **Bloqueadores** | ❌ Ninguno — Proyecto completamente funcional, lista para producción |
+| **Hito actual** | ✅ **Unidades 1 y 2 completadas** | PWA A/B hecho, PWA C pendiente navegador |
+| **Implementación** | **95% completada** — 24/24 endpoints, seguridad, ACID, PWA A/B código, tests 69/69 |
+| **Última tarea completada** | 2026-10-23 20:45: PWA Phase C build + sw.js (falta verificación navegador) |
+| **Siguiente tarea** | **Crítico:** PWA Phase C manual en navegador (15 min); **Luego:** Docker + despliegue |
+| **Bloqueadores** | ⚠️ PWA C verificación manual; Migración 004 (sin Docker); Lockfile canónico |
 
 ---
 
@@ -24,11 +24,12 @@
 | Componente | Estado | Detalles |
 |-----------|--------|---------|
 | **Backend (Go/Fiber)** | ✅ 100% | 24 endpoints, JWT + bcrypt, ACID, caché Redis, middleware |
-| **Frontend (React)** | ✅ 100% | Componentes críticos, servicios, contextos, PWA, pnpm |
-| **Database (PostgreSQL)** | ✅ 100% | 7 tablas, índices, constraints, migraciones idempotentes |
+| **Frontend (React)** | ✅ 100% | 100+ componentes, contextos, servicios, PWA code, tests 69/69 (54.6% coverage) |
+| **Database (PostgreSQL)** | ✅ 100% | 7 tablas, índices, constraints, migraciones 001-003 (004 requiere Docker) |
 | **Seguridad** | ✅ 100% | RequireAuth, RequireAdmin, RateLimit, CORS, JWT validation |
-| **PWA** | ✅ 100% | 3 fases completadas (A: instalable, B: offline lectura, C: validación build/preview) |
-| **Tests** | ⚠️ Parcial | Backend 60-75%, Frontend 0% — opcionales |
+| **PWA Fases A+B** | ✅ 100% | vite-plugin-pwa config, manifest, sw.js precache, runtime cache, components |
+| **PWA Phase C** | ⚠️ 0% verificación | Build OK, archivos generados, pendiente validación manual en navegador |
+| **Tests** | ✅ Parcial | Backend: go test -race OK · controllers 82.7%, domain 98.7% · Frontend: 69/69 ✓ |
 
 ---
 
@@ -86,13 +87,13 @@
 
 ## U1-T6 · Progressive Web App (Offline + Install + Sync)
 
-**Estado:** ✅ **100% Implementado** (Fases A, B, C completadas)
+**Estado:** ⚠️ **95% Implementado** (Fases A, B código hecho; C pendiente navegador)
 
 | Fase | Estado | Descripción |
 |------|--------|------------|
-| **PWA-A: Instalable** | ✅ Completada | manifest + icons + plugin Vite v2.0.0, app instala en homescreen |
-| **PWA-B: Offline lectura** | ✅ Completada | Cachea /api/productos only (StaleWhileRevalidate), OfflineBanner, purga en logout |
-| **PWA-C: Validación** | ✅ Completada | Build genera dist/ con sw.js + precache + workbox runtime, preview funciona |
+| **PWA-A: Instalable** | ✅ Código listo | manifest.webmanifest generado, icons, plugin Vite v2.0.0 configurado |
+| **PWA-B: Offline lectura** | ✅ Código listo | SW precache + /api/productos runtime cache, OfflineBanner, logout purga caché |
+| **PWA-C: Validación manual** | ⚠️ Pendiente | npm run preview → DevTools validación (manifest, SW registered, offline en /catalogo, install prompt) |
 
 **Referencia:** `.context/porImplementar/PWA_PLAN.md` (auditado, listo para implementar)
 
