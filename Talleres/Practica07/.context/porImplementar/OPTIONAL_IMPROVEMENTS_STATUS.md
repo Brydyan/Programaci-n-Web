@@ -270,3 +270,134 @@ go test -race ./...    # ✅ Sin data races
 **Responsable:** Auditoría técnica  
 **Versión:** 2.0 — Estado contra código real  
 **Próximo paso:** Despliegue en producción (ver `docs/DEPLOYMENT.md`)
+
+---
+---
+
+# 🔧 Correcciones a este documento (2026-10-23)
+
+Al verificar este archivo contra el código aparecieron **dos afirmaciones
+incorrectas** y **una carrera de datos real** que el documento da por resuelta.
+
+## 1. El bloque de código de I2 es inventado
+
+Las líneas 81-93 de este documento muestran:
+
+```go
+func (r *PostgresRepository) ActualizarVentasUpline(
+    ctx context.Context, uid int, total decimal.Decimal) error {
+    upline, err := r.getCadenaUpline(ctx, uid, 3)
+    ...
+```
+
+**Nada de eso existe en el repositorio.** Verificado:
+
+```
+grep -rn "PostgresRepository|decimal.Decimal|getCadenaUpline" backend/ --include="*.go"
+→ ninguno
+```
+
+La firma real es:
+
+```go
+// backend/repository/repository.go:1134
+func (r *Repository) ActualizarVentasUpline(emailUsuario string, total float64) error
+```
+
+- `*Repository`, no `*PostgresRepository`
+- Sin `context.Context` (el proyecto usa `database/sql` sin context en queries)
+- `emailUsuario string`, no `uid int`
+- `float64`, no `decimal.Decimal`
+- No hay `getCadenaUpline`: el upline se resuelve con una CTE recursiva en la
+  propia consulta
+
+**El riesgo:** un lector que tomara este bloque por real e intentara "arreglar"
+algo sobre él escribiría código contra firmas que no compilan. Es el mismo
+error que playlists documentos anteriores de `.context/`: código de ejemplo
+generado sin leer el fuente.
+
+## 2. "go test -race ✅ Sin data races" era falso — y había carrera
+
+Este documento afirma en "Verificación Final":
+
+```
+go test -race ./...    # ✅ Sin data races
+```
+
+Ese comando **no se había ejecutado**. Al correrlo:
+
+```
+--- FAIL: TestCheckoutController_felizCompra
+    testing.go:1865: race detected during execution of test
+```
+
+### Qué era
+
+La carrera estaba **en el doble de test**, no en producción:
+
+- El checkout lanza `actualizarContadores` en una **goroutine post-COMMIT**
+  (`checkoutController.go:88`), que llama a `CacheService.Increment`.
+- El test sondea `cache.increments[...]` esperando el efecto.
+- `versionedCache` usaba mapas de Go sin protección.
+
+Go bloquea un mapa de forma **individual por operación**: dos goroutines
+pueden no bloquearse entre sí, y una escribir mientras la otra lee. El
+síntoma puede ser un `fatal error: concurrent map read and map write`, que
+**aborta el binario completo**.
+
+> El caché real (Redis) sí es concurrente. El doble debe serlo también, o el
+> test mide un artefacto del doble en vez de una propiedad del código.
+
+### Corrección aplicada
+
+`versionedCache` ahora lleva `sync.RWMutex` y expone `accesos()`, que devuelve
+**copias** de los contadores para que quien inspecciona en el test no compita
+por el mapa con la goroutine.
+
+```
+go test -race -count=1 ./controllers   →  ok  (×3 corridas)
+```
+
+## 3. `npm run preview` tampoco se había ejecutado
+
+La línea `npm run preview # ✅ PWA preview en 4173` es una afirmación sin
+respaldo: no se corrió. **La fase C del PWA sigue pendiente** y requiere
+navegador.
+
+---
+
+## Lo que SÍ es correcto en este documento
+
+Los cuatro veredictos se sostienen:
+
+| Item | Veredicto | Correcto |
+|---|---|---|
+| I1 | 69 tests, 54.6% | ✅ |
+| I2 | No hay carrera en el SQL | ✅ (aunque el código de ejemplo no) |
+| I3 | CSS bars en vez de recharts | ✅ |
+| I4 | Paginación ya consistente | ✅ |
+
+## Estado verificado hoy
+
+```bash
+cd backend
+go build ./... && go vet ./...      # OK
+go test -race -count=1 ./...        # OK — sin carreras
+go test ./...                       # 4 paquetes ok
+                                    # controllers 82.7% · domain 98.7%
+
+cd ../frontend
+npm test                            # 69 passed (6 files)
+npm run lint && npx tsc -b          # limpio
+npm run build                       # ✓ precache 7 entries
+```
+
+## Pendientes reales
+
+| # | Qué | Por qué sigue abierto |
+|---|---|---|
+| 1 | **Fase C del PWA** | Requiere navegador: manifest, SW activo, `/catalogo` sin red, prompt de instalación |
+| 2 | **Migración 004** | Escrita pero no aplicada (sin Docker en este entorno) |
+| 3 | **36 tests de integración** | Hacen SKIP sin Postgres: `make db-up` |
+| 4 | **Lockfile canónico** | `package-lock.json` y `pnpm-lock.yaml` siguen ambos versionados |
+| 5 | **Nada commiteado** | El árbol traía ~37 archivos ajenos a este trabajo |

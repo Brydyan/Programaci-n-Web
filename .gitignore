@@ -14,6 +14,12 @@ dist
 dist-ssr
 *.local
 
+# Go: artefactos de build y de cobertura (backend/Makefile: make coverage)
+*.exe
+*.test
+coverage.out
+coverage.html
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -27,3 +33,8 @@ dist-ssr
 .atl/
 .claude/
 .codegraph/
+# Salida de `make test-coverage` en el frontend (HTML + JSON).
+# Los equivalentes del backend (coverage.out / coverage.html) ya estaban.
+frontend/coverage/
+coverage/
+.context/

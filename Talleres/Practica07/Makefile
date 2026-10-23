@@ -28,7 +28,7 @@ ADMIN_URL   ?= postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/postgr
 MIGRATIONS_DIR := database/migrations
 COMPOSE       := docker compose
 
-.PHONY: help up down ps logs db-up db-migrate db-reset db-psql db-status db-test \
+.PHONY: help up down ps logs db-up db-migrate db-reset db-psql db-status db-demo db-test \
         backend-test frontend-lint verify clean-volumes
 
 help:
@@ -97,6 +97,11 @@ db-reset:
 
 db-psql:
 	psql "$(DB_URL)"
+
+# Datos de demostración: red de 3 niveles, catálogo amplio y ~90 pedidos en
+# 120 días con su ledger. Idempotente (borra lo que creó antes).
+db-demo:
+	@psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f database/seeds/demo_data.sql
 
 db-status:
 	@psql "$(DB_URL)" -c "\dt" \

@@ -31,21 +31,21 @@
 
 | Componente | Versión | Propósito |
 |-----------|---------|----------|
-| **Node.js** | 18+ | Frontend (React + Vite) |
+| **Node.js** | ^20.19 ó ≥22.12 | Frontend (Vite 8 exige ese mínimo) |
 | **npm** | 9+ | Package manager JS |
-| **Go** | 1.21+ | Backend (Fiber) |
-| **Docker** | 20.10+ | Contenedores DB + Redis |
+| **pnpm** | 9+ | Alternativa; ver nota de lockfiles |
+| **Docker** | 20.10+ | Contenedores DB + Redis + backend |
 | **Docker Compose** | 2.0+ | Orquestación local |
 | **Git** | 2.30+ | Control de versiones |
 | **PostgreSQL CLI** | 14+ | Gestión base de datos (opcional) |
 
 ### Verificar Instalaciones
 ```bash
-node --version        # v18.0.0+
+node --version       # v20.19+ o v22.12+
 npm --version        # 9.0.0+
-go version          # go1.21+
-docker --version    # Docker 20.10+
-docker-compose --version  # Docker Compose 2.0+
+go version           # go1.26+
+docker --version     # Docker 20.10+
+docker compose version   # Compose v2 (plugin, sin guion)
 ```
 
 ---
@@ -97,42 +97,67 @@ cd Talleres/Practica07
 ### 2. Levantar Base de Datos + Redis
 
 ```bash
-# Desde raíz de Practica07
-docker-compose up -d postgres redis
+# Desde la raíz de Practica07
+docker compose up -d
 
-# Esperar a que estén healthy (~5-10 segundos)
-docker-compose ps
-# STATUS debe ser "healthy" para ambos
+# Espera a que postgres esté healthy (~5-10 s)
+docker compose ps
+# STATUS debe ser "healthy" para postgres
 ```
+
+> **Usa `docker compose`, no `docker-compose`.** Compose v2 es un plugin del
+> daemon y se invoca sin guion. El comando con guion es la v1, que ya no se
+> instala por defecto y da comportamientos distintos con `profiles`.
+
+Atajo equivalente del Makefile: `make db-up` (levanta sólo la infra).
 
 **Verificar conectividad:**
 ```bash
 # PostgreSQL
-docker-compose exec postgres psql -U admin -d multicatalogo -c "SELECT 1;"
+docker compose exec postgres psql -U admin -d multicatalogo -c "SELECT 1;"
 # Output: 1
 
 # Redis
-docker-compose exec redis redis-cli PING
+docker compose exec redis redis-cli PING
 # Output: PONG
+
+# Backend (sólo si lo levantaste)
+curl http://localhost:3000/api/health
 ```
 
 ### 3. Aplicar Migraciones
 
-```bash
-# Opción A: Automático (primera vez)
-# Las migraciones se aplican automáticamente al iniciar postgres
-docker-compose restart postgres
-sleep 5
+`database/migrations/` está montado en `/docker-entrypoint-initdb.d`, así que
+Postgres ejecuta los `.sql` **en orden alfabético, sólo cuando el volumen se
+crea por primera vez**.
 
-# Opción B: Manual
-docker-compose exec postgres psql -U admin -d multicatalogo < database/migrations/001_schema_base.sql
-docker-compose exec postgres psql -U admin -d multicatalogo < database/migrations/002_backoffice.sql
-docker-compose exec postgres psql -U admin -d multicatalogo < database/migrations/003_seed.sql
+> `docker compose restart postgres` **NO** re-aplica las migraciones. El
+> entrypoint de initdb sólo corre con un volumen vacío. Para reaplicar sobre un
+> volumen existente, usa los atajos del Makefile.
+
+```bash
+# Aplicar sobre un volumen existente
+make db-migrate      # psql -f de cada .sql, en orden
+make db-status       # tablas + conteos
+make db-reset        # ⚠ borra el volumen y re-aplica desde cero
 
 # Verificar
-docker-compose exec postgres psql -U admin -d multicatalogo -c "SELECT COUNT(*) FROM usuarios;"
+docker compose exec postgres psql -U admin -d multicatalogo \
+  -c "SELECT COUNT(*) FROM usuarios;"
 # Output: 3 (seed data)
 ```
+
+Migraciones actuales:
+
+| Archivo | Qué añade |
+|---|---|
+| `001_schema_base.sql` | `pedidos`, `pedido_items`, `comisiones` + extensión `pgcrypto` |
+| `002_backoffice.sql` | `usuarios`, `productos`, `referidos`, `liquidaciones` + índices, FKs, CHECKs |
+| `003_seed.sql` | Datos de prueba: 3 usuarios, 3 nodos de red, 4 productos |
+| `004_direccion_entrega.sql` | `pedidos.direccion`, `.ciudad`, `.telefono` + CHECKs de longitud |
+
+Todas son **idempotentes** (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT
+EXISTS`, guardas `DO $$` sobre `information_schema`).
 
 ### 4. Backend (Go/Fiber)
 
@@ -148,19 +173,35 @@ cp .env.example .env
 
 # Descargar dependencias
 go mod download
-go mod tidy
 
-# Compilar
-go build -o app .
+# Verificar
+go vet ./...
+make build        # go build ./...
 
-# Ejecutar
-./app
+# Tests
+make test              # go test ./...
+make test-race         # detector de carreras
+make coverage          # cobertura + coverage.html
+
+# Tests de integración: requieren PostgreSQL arriba y una base SEPARADA.
+make db-test           # crea multicatalogo_test + aplica migraciones (idempotente)
+make test-backend      # db-test + go test ./... con TEST_DATABASE_URL
+
+# ⚠ Los tests de integración hacen DELETE sobre pedidos, comisiones,
+#   pedido_items, liquidaciones y usuarios. Nunca deben correr contra
+#   `multicatalogo` (la base de desarrollo con los datos de `make db-demo`).
+#   Por eso dsnTest() cae por defecto en `multicatalogo_test`.
+#   Si no hay DB, los tests hacen t.Skip y la suite queda "verde" sin haber
+#   probado SQL: para saber que sí corrieron, revisa que el resumen diga
+#   `ok` y no haya líneas `--- SKIP`.
+
+# Ejecutar (lee .env)
+make run             # go run .
 # O directamente:
 go run .
 
 # Output esperado:
-# [11:42:32] Fiber v2.x.x
-# [11:42:32] 🚀  http://localhost:3000
+# [boot] APP_ENV=dev puerto=3000
 ```
 
 **Endpoint de prueba:**
@@ -179,16 +220,26 @@ cd frontend
 cp .env.example .env
 
 # Instalar dependencias
-npm install
+pnpm install          # = `make install` (--frozen-lockfile)
 
 # Desarrollo (hot reload)
-npm run dev
-# Output: VITE v4.x.x ready in XXX ms
+pnpm run dev
 # ➜  Local:   http://localhost:5173/
 
-# O build para producción
-npm run build  # Genera dist/
-npm run preview  # Servir build localmente
+# Verificar
+make lint            # eslint
+make typecheck       # tsc -b
+make test             # Vitest (69 tests)
+make test-coverage
+
+# Build
+make build           # genera dist/ (+ sw.js del plugin PWA)
+make preview         # sirve dist/ en :4173
+
+> **Prueba la PWA contra `preview`, no contra `dev`.** En desarrollo el
+> frontend (:5173) y el backend (:3000) son distinto origen, y el service
+> worker sólo cachea respuestas cross-origin si el backend manda CORS. En
+> `preview` ambos comparten origen.
 ```
 
 ### 6. Acceder a la Aplicación
@@ -196,8 +247,13 @@ npm run preview  # Servir build localmente
 ```
 Frontend:  http://localhost:5173
 Backend:   http://localhost:3000
-Adminer:   http://localhost:8080  (manage DB visually)
+PostgreSQL: localhost:5433
+Redis:      localhost:6379
 ```
+
+> No hay Adminer en este compose. Para ver la base con UI:
+> `psql "postgres://admin:secret@localhost:5433/multicatalogo"`,
+> o `dbeaver` / `pgAdmin` apuntando a `localhost:5433`.
 
 **Usuario de prueba:**
 - Email: `admin@upse.edu.ec`
@@ -289,16 +345,16 @@ railway init
 
 # Backend (Fiber)
 # 1. New → GitHub Repo → Practica07
-# 2. Environment: Go 1.21
+# 2. Environment: Go 1.26
 # 3. Build: cd backend && go build -o app
 # 4. Start: ./app
 # 5. Anotar PORT=3000
 
 # Frontend (React)
 # 1. New → GitHub Repo → Practica07
-# 2. Environment: Node 18
-# 3. Build: cd frontend && npm install && npm run build
-# 4. Start: npx serve -s dist -l 3000
+# 2. Environment: Node 22   (Vite 8 exige ^20.19 ó >=22.12)
+# 3. Build: cd frontend && pnpm install && pnpm run build
+# 4. Start: npx serve -s dist -l 3000   (o hosting estático: Vercel/Netlify)
 # (O usar static hosting: Vercel/Netlify en paralelo)
 ```
 
@@ -328,7 +384,7 @@ git push origin main
 ```bash
 # 1. Conectar GitHub repo
 # 2. Framework: Vite
-# 3. Build: npm run build
+# 3. Build: pnpm run build
 # 4. Output: dist
 # 5. Environment Variables:
 #    VITE_API_URL=https://backend-render.onrender.com
@@ -378,10 +434,10 @@ EOF
 # (cambiar puertos, volumenes persistentes, etc.)
 
 # 4. Levantar servicios
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 # 5. Verificar
-docker-compose ps
+docker compose ps
 curl http://localhost:3000/api/health
 ```
 
@@ -391,48 +447,122 @@ curl http://localhost:3000/api/health
 
 ### Local Development (docker-compose.yml)
 
-El archivo ya existe. Levanta:
-- **postgres:16** (puerto 5433)
-- **redis:7** (puerto 6379)
-- **adminer** (puerto 8080, opcional)
+El archivo declara **tres** servicios, todos sin `profiles` — `up` los levanta
+todos:
+
+| Servicio | Imagen | Puerto | Notas |
+|---|---|---|---|
+| `postgres` | `postgres:16-alpine` | `5433→5432` | healthcheck con `pg_isready`; volumen `multicatalogo_pgdata` |
+| `redis` | `redis:alpine` | `6379` | sin volumen (es caché, se puede perder) |
+| `backend` | build desde `./backend` | `3000→3000` | `depends_on` postgres *healthy* + redis; `restart: on-failure` |
 
 ```bash
-# Ver servicios
-docker-compose ps
+# Sólo la infra (postgres + redis)
+docker compose up -d postgres redis
 
-# Ver logs
-docker-compose logs -f postgres  # Logs PostgreSQL
-docker-compose logs -f redis     # Logs Redis
+# Todo, incluido el backend
+docker compose up -d
+make db-up          # atajo: sólo infra
+
+# Estado y logs
+docker compose ps
+docker compose logs -f postgres
+docker compose logs -f backend
 
 # Detener
-docker-compose down
+docker compose down
 
-# Resetear (eliminar volúmenes)
-docker-compose down -v
+# Atajo equivalente
+make down / make ps / make logs
 ```
+
+#### ⚠️ `down -v` borra tus datos
+
+```bash
+docker compose down -v        # ← elimina el volumen multicatalogo_pgdata
+```
+
+Con `-v` se lleva la base de datos entera: usuarios, productos, pedidos. Sólo
+úsalo si quieres empezar de cero, y entonces aplica las migraciones de nuevo:
+
+```bash
+docker compose down -v && docker compose up -d   # vuelve a initdb
+make db-status
+```
+
+#### `JWT_SECRET` es obligatorio
+
+El compose lo declara así:
+
+```yaml
+JWT_SECRET: ${JWT_SECRET:?JWT_SECRET requerido (≥32 bytes)...}
+```
+
+La sintaxis `:?` hace que `docker compose up` **falle de inmediato** si la
+variable no está definida. Está en `.env`; si falta:
+
+```bash
+echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env
+```
+
+#### Nota sobre lockfiles
+
+#### Gestor de paquetes: pnpm
+
+El lockfile canónico es **`pnpm-lock.yaml`**. Ya no existe `package-lock.json`
+en el frontend, y no debe volver: con ambos presentes el siguiente
+`npm install` regenera el lock desde cero e instala versiones que nadie
+probó.
+
+```
+pnpm install --frozen-lockfile   # es lo que hace `make install`
+```
+
+`--frozen-lockfile` falla si el lock no cuadra con `package.json`, que es lo
+deseable en CI. El `Makefile` del frontend usa `NPM ?= pnpm` como variable, así
+que todo target (`make lint`, `make test`, `make build`, `make audit`) corre con
+pnpm.
+
+**Vulnerabilidades transitivas.** Los overrides viven en
+`frontend/pnpm-workspace.yaml`, no en el campo `pnpm` de `package.json`: pnpm 11
+ignora ese campo en silencio (solo avisa por stderr). Hoy fuerza
+`source-map-js@1.2.2`, que llega transitiva por `@tailwindcss/node` y por
+`css-tree → jsdom` sin versión parcheada propia. `make audit` falla el build si
+vuelve a aparecer cualquier advisory high o critical.
+
+Consecuencia práctica: una dependencia transitiva no es visible para el bundler.
+Por eso `workbox-window` está declarada como devDependency **explícita** en
+`package.json` aunque `vite-plugin-pwa` ya la traiga:
+
+```
+[vite]: Rolldown failed to resolve import "workbox-window"
+```
+
+Usa **pnpm** de forma consistente. Mezclar gestores reescribe el árbol y rompe
+`node_modules`.
 
 ### Producción (Multi-Stage Build)
 
-**Backend Dockerfile:**
+**Backend Dockerfile** — el real, en `backend/Dockerfile`:
 ```dockerfile
-# build.Dockerfile (backend/)
-FROM golang:1.21-alpine AS builder
-
+FROM golang:1.26-alpine AS builder
 WORKDIR /app
-COPY go.* .
+COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o app .
+RUN go build -o server .
 
-FROM alpine:3.18
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/app .
-
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder /app/.env.example ./.env.example
+COPY --from=builder /app/server .
 EXPOSE 3000
-CMD ["./app"]
+CMD ["./server"]
 ```
+
+> El binario se llama **`server`**, no `app`. Es lo que espera el `CMD`, y lo
+> que produce `make build`. Un `CMD ["./app"]` arrancaría un binario inexistente
+> y el contenedor saldría con exit 1.
 
 **Build y push:**
 ```bash
@@ -440,17 +570,21 @@ docker build -t tu-registry/multicatalogo-backend:1.0 -f backend/Dockerfile back
 docker push tu-registry/multicatalogo-backend:1.0
 ```
 
-**Frontend Dockerfile:**
+**Frontend Dockerfile** — *no existe en el repositorio*. Si lo añades:
 ```dockerfile
-# Dockerfile (frontend/)
-FROM node:18-alpine AS builder
+FROM node:22-alpine AS builder   # Vite 8 exige Node ^20.19 ó >=22.12
+
+# pnpm no viene en la imagen de node: hay que habilitarlo.
+RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
 
 WORKDIR /app
-COPY package*.json .
-RUN npm install
+# pnpm-workspace.yaml NO es opcional: lleva los `overrides` de seguridad.
+# Copiarlo sin él deja la imagen con las versiones sin parchear.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -498,11 +632,14 @@ Railway detecta cambios en main → auto-deploya
 **Local:**
 ```bash
 # Dump de BD
-docker-compose exec postgres pg_dump -U admin multicatalogo > backup-$(date +%Y%m%d).sql
+docker compose exec -T postgres pg_dump -U admin multicatalogo > backup-$(date +%Y%m%d).sql
 
 # Restaurar
-docker-compose exec postgres psql -U admin multicatalogo < backup-20261023.sql
+docker compose exec -T postgres psql -U admin multicatalogo < backup-20261023.sql
 ```
+
+> La `-T` desactiva la TTY. Sin ella, `pg_dump` falla con
+> `the input device is not a TTY` al redirigir la salida a un archivo.
 
 **Producción:**
 Railway y Render tienen backups automáticos. Ver en Dashboards.
@@ -512,20 +649,32 @@ Railway y Render tienen backups automáticos. Ver en Dashboards.
 Migraciones son **idempotentes** (aplican sin error si ya existen).
 
 ```bash
-# Aplicar manualmente (si es necesario)
-docker-compose exec postgres psql -U admin multicatalogo -f /migrations/001_schema_base.sql
+make db-migrate     # aplica todas en orden alfabético
+make db-status      # tablas + conteos
 ```
 
-### Monitorear
+O sobre el volumen existente, a mano:
 
-**Adminer (UI web para BD):**
+```bash
+docker compose exec -T postgres psql -U admin -d multicatalogo \
+  -f /docker-entrypoint-initdb.d/004_direccion_entrega.sql
 ```
-http://localhost:8080
-Server: postgres
-User: admin
-Password: secret
-Database: multicatalogo
+
+### Inspección de la base
+
+```bash
+# PSQL dentro del contenedor
+docker compose exec postgres psql -U admin -d multicatalogo
+
+# Desde el host, con la app instalada
+psql "postgres://admin:secret@localhost:5433/multicatalogo"
+
+# Atajo
+make db-psql
 ```
+
+**Cliente gráfico:** DBeaver o pgApp → host `localhost`, puerto **5433**, base
+`multicatalogo`, usuario `admin`, contraseña `secret`.
 
 ---
 
@@ -554,7 +703,7 @@ VITE_API_URL=http://localhost:3000
 
 #### Port 5173 ya en uso
 ```bash
-npm run dev -- --port 5174
+pnpm run dev -- --port 5174
 ```
 
 ### Backend
@@ -562,9 +711,9 @@ npm run dev -- --port 5174
 #### "database connection refused"
 ```bash
 # Verificar PostgreSQL
-docker-compose ps postgres
+docker compose ps postgres
 # Si stopped, reiniciar:
-docker-compose up -d postgres
+docker compose up -d postgres
 
 # Esperar healthcheck
 sleep 10
@@ -573,10 +722,10 @@ sleep 10
 #### "redis: connection refused"
 ```bash
 # Verificar Redis
-docker-compose up -d redis
+docker compose up -d redis
 
 # Test
-docker-compose exec redis redis-cli PING
+docker compose exec redis redis-cli PING
 ```
 
 #### "JWT_SECRET no configurado"
@@ -597,18 +746,29 @@ PORT=3001 go run .
 
 #### "no such table"
 ```bash
-# Aplicar migraciones
-docker-compose exec postgres psql -U admin multicatalogo < database/migrations/001_schema_base.sql
+# ¿Es el primer arranque? Las migraciones se aplican solas al crear el volumen.
+docker compose exec postgres psql -U admin -d multicatalogo -c "\dt"
+
+# ¿Volumen ya existente? Reaplicar a mano.
+make db-migrate
+
+# ¿Empezar de cero? (⚠ borra los datos)
+make db-reset
 ```
+
+#### "relation pedidos does not exist" pero la tabla está
+El backend corre en Docker y espera `postgres:5432`; desde el host el puerto es
+**5433**. Si cambiaste una de las dos rutas, los dos extremos apuntan a sitios
+distintos.
 
 #### "too many connections"
 ```bash
 # Ver conexiones
-docker-compose exec postgres psql -U admin -c "SELECT count(*) FROM pg_stat_activity;"
+docker compose exec postgres psql -U admin -c "SELECT count(*) FROM pg_stat_activity;"
 
 # Matar conexiones (cuidado)
-docker-compose down
-docker-compose up -d postgres
+docker compose down
+docker compose up -d postgres
 ```
 
 ### Docker
@@ -618,7 +778,7 @@ docker-compose up -d postgres
 # Cambiar puerto en docker-compose.yml
 # "5433:5432" → "5434:5432"
 
-docker-compose up -d
+docker compose up -d
 ```
 
 #### "no space left on device"
@@ -627,8 +787,8 @@ docker-compose up -d
 docker volume prune
 
 # O resetear todo
-docker-compose down -v
-docker-compose up -d
+docker compose down -v
+docker compose up -d
 ```
 
 ---
@@ -637,10 +797,18 @@ docker-compose up -d
 
 ### Pre-Despliegue
 - [ ] `git status` limpio (sin cambios sin commitear)
-- [ ] `npm run build` sin errores (frontend)
-- [ ] `go build ./...` sin errores (backend)
-- [ ] `npm run test` pasa (si existe)
-- [ ] `go test ./...` pasa (si existe)
+- [ ] `make typecheck` sin errores (frontend)
+- [ ] `make build` sin errores (frontend)
+- [ ] `make -C backend vet` sin errores (backend)
+- [ ] `make -C backend build` sin errores (backend)
+- [ ] `make test` pasa — **69 tests** (frontend)
+- [ ] `make db-test` antes de `make test-backend` (si no, los tests de
+      integración hacen `t.Skip` y pasan sin probar SQL)
+- [ ] `make test-backend` pasa — **295 tests, 0 skip** (backend)
+- [ ] `make -C backend coverage` — cobertura >70% en `controllers` y `domain`
+- [ ] `make -C backend test-race` sin carreras de datos
+- [ ] `make test-backend` es idempotente: correrlo 2 veces seguidas da el
+      mismo resultado (los residuos entre corridas se limpian solos)
 - [ ] `.env` configurado con valores de producción
 - [ ] `JWT_SECRET` generado con openssl (>= 32 bytes)
 - [ ] `DATABASE_URL` apunta a BD producción
@@ -677,7 +845,7 @@ railway logs
 # Ver en Dashboard → Logs
 
 # Docker (VPS)
-docker-compose logs -f backend
+docker compose logs -f backend
 ```
 
 ### Métricas (opcional)
@@ -697,11 +865,15 @@ docker stats
 
 | Servicio | Desarrollo | Producción |
 |----------|-----------|-----------|
-| Frontend | http://localhost:5173 | https://tu-dominio.com |
-| Backend | http://localhost:3000 | https://tu-dominio.com/api |
-| PostgreSQL | localhost:5433 | Managed (Railway/Render) |
-| Redis | localhost:6379 | Managed (Railway/Render) |
-| Adminer | http://localhost:8080 | N/A (local only) |
+| Frontend (Vite) | http://localhost:5173 | — |
+| Frontend (preview) | http://localhost:4173 | https://tu-dominio.com |
+| Backend | http://localhost:3000 | https://tu-dominio.com |
+| PostgreSQL | `localhost:5433` | Managed (Railway/Render) |
+| Redis | `localhost:6379` | Managed (Railway/Render) |
+
+> El puerto de PostgreSQL es **5433**, no 5432: el compose lo mapea así para no
+> chocar con un Postgres del sistema. `DATABASE_URL` dentro de Docker apunta a
+> `postgres:5432` (la red interna); desde el host, a `localhost:5433`.
 
 ---
 
