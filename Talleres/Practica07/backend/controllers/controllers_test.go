@@ -19,8 +19,11 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/lib/pq"
 	"multicatalogo-backend/config"
 	"multicatalogo-backend/controllers"
+	"multicatalogo-backend/domain"
+	"multicatalogo-backend/interfaces"
 	"multicatalogo-backend/middleware"
 	"multicatalogo-backend/models"
 	"multicatalogo-backend/repository"
@@ -38,15 +41,27 @@ func (m *MockCacheService) Set(_ context.Context, _ string, _ interface{}, _ tim
 	return nil
 }
 func (m *MockCacheService) Delete(_ context.Context, _ string) error { return nil }
+func (m *MockCacheService) Increment(_ context.Context, _ string) (int64, error) {
+	return 1, nil
+}
 
 // secret de pruebas — 64 bytes aleatorios pero deterministas.
 var testJWTSecret = []byte("test-jwt-secret-test-jwt-secret-test-jwt-secret-test-jwt-secret")
 
-// dsnTest es la cadena de conexión que usan los tests que pegan contra
-// la DB real (practica07-postgres-1 escuchando en localhost:5433). Si
-// TEST_DATABASE_URL está definida en el entorno gana sobre el default.
+// dsnTest es la cadena de conexión que usan los tests que pegan contra la
+// DB real. Orden de precedencia:
+//
+//	TEST_DATABASE_URL → DATABASE_URL → default de desarrollo
+//
+// Sin el segundo paso los tests se saltaban en silencio en CI: el job declara
+// el servicio Postgres con la base `multicatalogo_test` pero el paso de test
+// exportaba otra DATABASE_URL, la conexión fallaba y el `t.Skip` tapaba el
+// problema dejando la suite "verde" sin haber probado SQL.
 func dsnTest() string {
 	if v := os.Getenv("TEST_DATABASE_URL"); v != "" {
+		return v
+	}
+	if v := os.Getenv("DATABASE_URL"); v != "" {
 		return v
 	}
 	return "postgres://admin:secret@localhost:5433/multicatalogo?sslmode=disable"
@@ -60,11 +75,14 @@ func setupTestApp() *fiber.App {
 	cache := &MockCacheService{}
 
 	ctrl := routes.Controllers{
-		Auth:     controllers.NewAuthController(repo),
-		Producto: controllers.NewProductoController(repo, cache),
-		Network:  controllers.NewNetworkController(repo, cache),
-		Checkout: controllers.NewCheckoutController(repo, cache),
-		Pedidos:  controllers.NewPedidosController(repo, cache),
+		Auth:          controllers.NewAuthController(repo, cache),
+		Producto:      controllers.NewProductoController(repo, cache),
+		Network:       controllers.NewNetworkController(repo, cache),
+		Checkout:      controllers.NewCheckoutController(repo, cache),
+		Pedidos:       controllers.NewPedidosController(repo, cache),
+		Comisiones:    controllers.NewComisionesController(repo),
+		Liquidaciones: controllers.NewLiquidacionesController(repo),
+		Reportes:      controllers.NewReportesController(repo, cache),
 	}
 
 	app := fiber.New()
@@ -107,11 +125,13 @@ func setupTestDB(t *testing.T) (*fiber.App, *sql.DB) {
 	cache := &MockCacheService{}
 
 	ctrl := routes.Controllers{
-		Auth:     controllers.NewAuthController(repo),
-		Producto: controllers.NewProductoController(repo, cache),
-		Network:  controllers.NewNetworkController(repo, cache),
-		Checkout: controllers.NewCheckoutController(repo, cache),
-		Pedidos:  controllers.NewPedidosController(repo, cache),
+		Auth:          controllers.NewAuthController(repo, cache),
+		Producto:      controllers.NewProductoController(repo, cache),
+		Network:       controllers.NewNetworkController(repo, cache),
+		Checkout:      controllers.NewCheckoutController(repo, cache),
+		Pedidos:       controllers.NewPedidosController(repo, cache),
+		Comisiones:    controllers.NewComisionesController(repo),
+		Liquidaciones: controllers.NewLiquidacionesController(repo),
 	}
 
 	app := fiber.New()
@@ -635,19 +655,130 @@ func TestProductos(t *testing.T) {
 	})
 }
 
-func TestNetwork(t *testing.T) {
+// TestNetwork_requiereRolAdmin documenta el cambio de seguridad de Sprint 1:
+// /api/red pasó de público (mock) a admin-only, porque la estructura completa
+// de la red y sus ventas no son datos públicos.
+func TestNetwork_requiereRolAdmin(t *testing.T) {
 	app := setupTestApp()
-	req := httptest.NewRequest(http.MethodGet, "/api/red", nil)
-	resp, _ := app.Test(req)
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
+
+	t.Run("sin token → 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/red", nil)
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("token de cliente → 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/red", nil)
+		req.Header.Set("Authorization", clientAuthHeader(t))
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403, got %d", resp.StatusCode)
+		}
+	})
+}
+
+// TestRedMia_devuelveSubarbolDelUsuario verifica contra la DB real que
+// /api/red/mia devuelve el árbol del usuario del token y no el global, y que
+// el ensamblado anidado conserva la jerarquía.
+func TestRedMia_devuelveSubarbolDelUsuario(t *testing.T) {
+	db, err := sql.Open("postgres", dsnTest())
+	if err != nil {
+		t.Skipf("DB no disponible: %v", err)
 	}
-	var red []models.Referido
-	body, _ := io.ReadAll(resp.Body)
-	_ = json.Unmarshal(body, &red)
-	if len(red) != 3 {
-		t.Errorf("expected 3 referidos, got %d", len(red))
+	if err := db.Ping(); err != nil {
+		t.Skipf("DB ping fail: %v", err)
 	}
+	defer db.Close()
+	config.DB = db
+	ensureSeed(t, db)
+
+	// Escena controlada: raíz "TU" (1) ← admin (2) ← adminHijo (3) ← hoja (4).
+	// El cliente cuelga de la hoja para que su subárbol sea una sola rama,
+	// demostrable frente al árbol global.
+	ids := crearEscenaRed(t, db)
+	repo := repository.NewRepository(db)
+	cache := &MockCacheService{}
+	ctrl := routes.Controllers{
+		Auth:          controllers.NewAuthController(repo, cache),
+		Producto:      controllers.NewProductoController(repo, cache),
+		Network:       controllers.NewNetworkController(repo, cache),
+		Checkout:      controllers.NewCheckoutController(repo, cache),
+		Pedidos:       controllers.NewPedidosController(repo, cache),
+		Comisiones:    controllers.NewComisionesController(repo),
+		Liquidaciones: controllers.NewLiquidacionesController(repo),
+	}
+	app := fiber.New()
+	app.Use(middleware.SecurityHeaders())
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals(middleware.JWTSecretKey, testJWTSecret)
+		return c.Next()
+	})
+	routes.SetupRoutes(app, ctrl, testJWTSecret)
+
+	get := func(usuarioID int, email string) []domain.NodoRed {
+		t.Helper()
+		tok, err := middleware.SignJWT(testJWTSecret, middleware.JWTClaims{
+			Sub: usuarioID, Email: email, Rol: "cliente",
+			Exp: time.Now().Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatalf("SignJWT: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/red/mia", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("GET /api/red/mia: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		var arbol []domain.NodoRed
+		body, _ := io.ReadAll(resp.Body)
+		if err := json.Unmarshal(body, &arbol); err != nil {
+			t.Fatalf("respuesta no es un árbol JSON: %v (body=%s)", err, body)
+		}
+		return arbol
+	}
+
+	arbolAdmin := get(ids.admin, "admin@upse.edu.ec")
+	if len(arbolAdmin) != 1 {
+		t.Fatalf("el admin debería ver 1 raíz (su nodo), obtuvo %d", len(arbolAdmin))
+	}
+	// admin ← hijo ← hoja ← cliente : el admin ve 4 nodos, el último a
+	// distancia 3.
+	if total := domain.ContarNodos(arbolAdmin); total != 4 {
+		t.Errorf("el admin debería ver 4 nodos (él + 3 descendientes), obtuvo %d", total)
+	}
+	if arbolAdmin[0].Nivel != 0 {
+		t.Errorf("el nodo propio debe ser nivel 0, obtuvo %d", arbolAdmin[0].Nivel)
+	}
+	// La rama debe quedar anidada, no aplanada: se baja siguiendo el único
+	// hijo de cada nodo y se cuenta hasta el final.
+	profundidad := 0
+	for n := arbolAdmin[0]; len(n.Hijos) > 0; n = n.Hijos[0] {
+		profundidad++
+	}
+	if profundidad != 3 {
+		t.Errorf("esperaba una cadena de profundidad 3, obtuvo %d", profundidad)
+	}
+	if len(arbolAdmin[0].Hijos) != 1 {
+		t.Errorf("esperaba una sola rama desde el admin, obtuvo %d", len(arbolAdmin[0].Hijos))
+	}
+
+	// El cliente cuelga de la hoja: su subárbol es sólo él mismo.
+	arbolCliente := get(ids.cliente, "cliente@upse.edu.ec")
+	if len(arbolCliente) != 1 {
+		t.Fatalf("el cliente debería ver 1 raíz, obtuvo %d", len(arbolCliente))
+	}
+	if domain.ContarNodos(arbolCliente) != 1 {
+		t.Errorf("el cliente no debería ver la red del admin, obtuvo %d nodos",
+			domain.ContarNodos(arbolCliente))
+	}
+
+	limpiarEscenaRed(t, db, ids)
 }
 
 func TestCheckout(t *testing.T) {
@@ -655,7 +786,7 @@ func TestCheckout(t *testing.T) {
 
 	t.Run("Sin auth → 401", func(t *testing.T) {
 		// F3 migró /api/checkout a RequireAuth — sin token debe ser 401.
-		body := `{"nombre":"Test","email":"test@email.com","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
+		body := `{"nombre":"Test","direccion":"Av. 10 de Agosto 100","ciudad":"Quito","telefono":"0987654321","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := app.Test(req)
@@ -688,7 +819,7 @@ func TestCheckout(t *testing.T) {
 
 	t.Run("Auth + sin DB → 500", func(t *testing.T) {
 		// Pasamos auth pero el repo tiene db=nil → 500 INTERNAL.
-		body := `{"nombre":"Test","email":"test@email.com","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
+		body := `{"nombre":"Test","direccion":"Av. 10 de Agosto 100","ciudad":"Quito","telefono":"0987654321","metodo_pago":"tarjeta","items":[{"id":1,"nombre":"Serum","precio":45,"cantidad":1}]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", clientAuthHeader(t))
@@ -1174,6 +1305,12 @@ func (rc *recordingCache) Delete(_ context.Context, k string) error {
 	return nil
 }
 
+// Increment simula el contador de versión de la red. No hace falta guardar
+// nada: los tests que lo observan usan un cache propio.
+func (rc *recordingCache) Increment(_ context.Context, _ string) (int64, error) {
+	return 1, nil
+}
+
 func TestProductoCacheInvalidation(t *testing.T) {
 	// Reconstruimos una app con recordingCache para verificar que el handler
 	// escribe `productos:all` en el primer GET y la borra tras un write admin.
@@ -1193,11 +1330,13 @@ func TestProductoCacheInvalidation(t *testing.T) {
 	repo := repository.NewRepository(db)
 	cache := newRecordingCache()
 	ctrl := routes.Controllers{
-		Auth:     controllers.NewAuthController(repo),
-		Producto: controllers.NewProductoController(repo, cache),
-		Network:  controllers.NewNetworkController(repo, cache),
-		Checkout: controllers.NewCheckoutController(repo, cache),
-		Pedidos:  controllers.NewPedidosController(repo, cache),
+		Auth:          controllers.NewAuthController(repo, cache),
+		Producto:      controllers.NewProductoController(repo, cache),
+		Network:       controllers.NewNetworkController(repo, cache),
+		Checkout:      controllers.NewCheckoutController(repo, cache),
+		Pedidos:       controllers.NewPedidosController(repo, cache),
+		Comisiones:    controllers.NewComisionesController(repo),
+		Liquidaciones: controllers.NewLiquidacionesController(repo),
 	}
 	app := fiber.New()
 	app.Use(middleware.SecurityHeaders())
@@ -1425,8 +1564,8 @@ func seedPedido(t *testing.T, db *sql.DB, usuarioID int, email string, estado st
 	var total float64
 	type linea struct {
 		productoID, cantidad int
-		nombre              string
-		precio              float64
+		nombre               string
+		precio               float64
 	}
 	lineas := make([]linea, 0, len(items))
 	for _, it := range items {
@@ -1860,4 +1999,702 @@ func TestCancelarRevierteComisiones(t *testing.T) {
 	if countPendientePost != 0 {
 		t.Errorf("esperaba 0 comisiones pendientes post-cancel, got %d", countPendientePost)
 	}
+}
+
+// ── Escena de red para tests de /api/red/mia ─────────────────────────────────
+
+// escenaRedIDs agrupa los ids que crea crearEscenaRed, para poder deshacerla.
+type escenaRedIDs struct {
+	admin, cliente     int
+	nodoAdmin          int
+	nodoHijo, nodoHoja int
+	nodoCliente        int
+}
+
+// crearEscenaRed monta un árbol de 4 niveles sobre la raíz del seed:
+//
+//	TU (1) ← admin ← hijo ← hoja ← cliente
+//
+// Así el admin ve 3 nodos (él + 2) y el cliente ve sólo el suyo: la
+// diferencia prueba que /api/red/mia devuelve el subárbol y no el global.
+func crearEscenaRed(t *testing.T, db *sql.DB) escenaRedIDs {
+	t.Helper()
+	var ids escenaRedIDs
+
+	limpiarEscenaRed(t, db, ids) // por si una corrida anterior quedó a medias
+
+	if err := db.QueryRow(`SELECT id FROM usuarios WHERE email = $1`, "admin@upse.edu.ec").Scan(&ids.admin); err != nil {
+		t.Fatalf("[escena] admin no encontrado: %v", err)
+	}
+	if err := db.QueryRow(`SELECT id FROM usuarios WHERE email = $1`, "cliente@upse.edu.ec").Scan(&ids.cliente); err != nil {
+		t.Fatalf("[escena] cliente no encontrado: %v", err)
+	}
+
+	insertar := func(codigo string, parent int) int {
+		var id int
+		err := db.QueryRow(
+			`INSERT INTO referidos (codigo, parent_id) VALUES ($1, $2) RETURNING id`,
+			codigo, parent,
+		).Scan(&id)
+		if err != nil {
+			t.Fatalf("[escena] insert %s: %v", codigo, err)
+		}
+		return id
+	}
+
+	const raizTU = 1
+	ids.nodoAdmin = insertar("TESTADM", raizTU)
+	ids.nodoHijo = insertar("TESTHIJ", ids.nodoAdmin)
+	ids.nodoHoja = insertar("TESTHOJ", ids.nodoHijo)
+	ids.nodoCliente = insertar("TESTCLI", ids.nodoHoja)
+
+	if _, err := db.Exec(`UPDATE usuarios SET referido_id = $1 WHERE id = $2`, ids.nodoAdmin, ids.admin); err != nil {
+		t.Fatalf("[escena] link admin: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE usuarios SET referido_id = $1 WHERE id = $2`, ids.nodoCliente, ids.cliente); err != nil {
+		t.Fatalf("[escena] link cliente: %v", err)
+	}
+	// referidos.usuario_id es el vínculo inverso: sin él el nodo se mostraría
+	// con su código en vez del nombre de la persona. La columna es UNIQUE, así
+	// que primero soltamos el enlace que dejó el seed.
+	if _, err := db.Exec(
+		`UPDATE referidos SET usuario_id = NULL
+		  WHERE usuario_id IN (SELECT id FROM usuarios WHERE email IN ('admin@upse.edu.ec','cliente@upse.edu.ec'))`,
+	); err != nil {
+		t.Fatalf("[escena] soltar vinculo inverso: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE referidos SET usuario_id = $1 WHERE id = $2`, ids.admin, ids.nodoAdmin); err != nil {
+		t.Fatalf("[escena] link inverso admin: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE referidos SET usuario_id = $1 WHERE id = $2`, ids.cliente, ids.nodoCliente); err != nil {
+		t.Fatalf("[escena] link inverso cliente: %v", err)
+	}
+	return ids
+}
+
+// limpiarEscenaRed borra los nodos TEST* y restituye los vínculos del seed
+// (admin → TU, cliente → LUIS). Borra de hojas a raíz porque parent_id es FK.
+func limpiarEscenaRed(t *testing.T, db *sql.DB, ids escenaRedIDs) {
+	t.Helper()
+	for _, codigo := range []string{"TESTCLI", "TESTHOJ", "TESTHIJ", "TESTADM"} {
+		if _, err := db.Exec(`DELETE FROM referidos WHERE codigo = $1`, codigo); err != nil {
+			t.Fatalf("[escena] cleanup %s: %v", codigo, err)
+		}
+	}
+	if _, err := db.Exec(
+		`UPDATE usuarios SET referido_id = 1 WHERE email = 'admin@upse.edu.ec'`,
+	); err != nil {
+		t.Fatalf("[escena] restore admin: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE usuarios SET referido_id = (SELECT id FROM referidos WHERE codigo = 'LUIS')
+		  WHERE email = 'cliente@upse.edu.ec'`,
+	); err != nil {
+		t.Fatalf("[escena] restore cliente: %v", err)
+	}
+	// Restituye el vínculo inverso que crea 003_seed.sql.
+	if _, err := db.Exec(
+		`UPDATE referidos SET usuario_id = (SELECT id FROM usuarios WHERE email = 'admin@upse.edu.ec')
+		  WHERE codigo = 'ADMIN'`,
+	); err != nil {
+		t.Fatalf("[escena] restore nodo admin: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE referidos SET usuario_id = (SELECT id FROM usuarios WHERE email = 'cliente@upse.edu.ec')
+		  WHERE codigo = 'LUIS'`,
+	); err != nil {
+		t.Fatalf("[escena] restore nodo luis: %v", err)
+	}
+}
+
+// ── Ledger de comisiones (Sprint 2) ─────────────────────────────────────────
+
+// TestCheckout_escribeElLedgerEnLaMismaTransaccion es la prueba que faltaba
+// antes de Sprint 2: compra → las comisiones existen con el mismo pedido_id,
+// y al cancelar se revierten junto con el contador de ventas.
+//
+// Monta una cadena real de 3 usuarios para que haya nivel 1 y nivel 2:
+//
+//	arriba(1) ← medio(2) ← comprador
+func TestCheckout_escribeElLedgerEnLaMismaTransaccion(t *testing.T) {
+	db, err := sql.Open("postgres", dsnTest())
+	if err != nil {
+		t.Skipf("DB no disponible: %v", err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Skipf("DB ping fail: %v", err)
+	}
+	defer db.Close()
+	config.DB = db
+	ensureSeed(t, db)
+
+	usuarios := crearCadenaMLM(t, db)
+
+	repo := repository.NewRepository(db)
+	cache := &MockCacheService{}
+	app := appConRepo(repo, cache)
+
+	// ── 1) Compra como el usuario más abajo de la cadena ──────────────────
+	tokenComprador := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
+	body := fmt.Sprintf(
+		`{"nombre":"Compra","email":"comprador@prueba.com","metodo_pago":"tarjeta",`+
+			`"items":[{"id":%d,"nombre":"Producto","precio":100,"cantidad":1}]}`,
+		usuarios.productoID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tokenComprador)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		msg, _ := io.ReadAll(resp.Body)
+		t.Fatalf("checkout: esperaba 201, obtuvo %d (%s)", resp.StatusCode, msg)
+	}
+
+	var pedidoID int
+	var creado struct {
+		ID int `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&creado); err != nil {
+		t.Fatalf("no se pudo leer el id del pedido: %v", err)
+	}
+	pedidoID = creado.ID
+
+	// ── 2) El ledger existe con el reparto correcto ────────────────────────
+	tipo, monto, nivel, err := leerComision(t, db, usuarios.referidoMedio)
+	if err != nil {
+		t.Fatalf("el nivel 1 no quedó registrado en el ledger: %v", err)
+	}
+	if nivel != 1 {
+		t.Errorf("esperaba nivel 1, obtuvo %d", nivel)
+	}
+	if monto != 10 {
+		t.Errorf("el 10%% de 100 son 10.00, obtuvo %.2f", monto)
+	}
+	if tipo != "pendiente" {
+		t.Errorf("una comisión nueva nace pendiente, obtuvo %q", tipo)
+	}
+
+	if _, _, nivel2, err := leerComision(t, db, usuarios.referidoArriba); err != nil {
+		t.Fatalf("el nivel 2 no quedó registrado: %v", err)
+	} else if nivel2 != 2 {
+		t.Errorf("esperaba nivel 2, obtuvo %d", nivel2)
+	}
+
+	// El ledger apunta al pedido: sin eso no se puede auditar ni revertir.
+	var conPedido int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM comisiones WHERE pedido_id = $1`, pedidoID,
+	).Scan(&conPedido); err != nil {
+		t.Fatalf("contando comisiones del pedido: %v", err)
+	}
+	if conPedido != 2 {
+		t.Errorf("esperaba 2 comisiones enlazadas al pedido %d, encontré %d", pedidoID, conPedido)
+	}
+
+	// ── 3) El nivel 1 ve su dinero en /api/comisiones/mias ─────────────────
+	tokenMedio := firmarToken(t, usuarios.medio, "medio@prueba.com")
+	req = httptest.NewRequest(http.MethodGet, "/api/comisiones/mias", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenMedio)
+	resp, _ = app.Test(req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("comisiones/mias: esperaba 200, obtuvo %d", resp.StatusCode)
+	}
+	var resumen models.ComisionResumen
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &resumen); err != nil {
+		t.Fatalf("respuesta de comisiones/mias ilegible: %v (%s)", err, bodyBytes)
+	}
+	if resumen.Total != 1 {
+		t.Errorf("el nivel 1 debía ver 1 comisión, vio %d", resumen.Total)
+	}
+	if len(resumen.Totales) == 0 || resumen.Totales[0].Total != 10 {
+		t.Errorf("esperaba un total pendiente de 10.00, obtuve %+v", resumen.Totales)
+	}
+
+	// El comprador NO tiene comisiones propias: su dinero va al upline.
+	tokenComprador2 := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
+	req = httptest.NewRequest(http.MethodGet, "/api/comisiones/mias", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenComprador2)
+	resp, _ = app.Test(req)
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	_ = json.Unmarshal(bodyBytes, &resumen)
+	if resumen.Total != 0 {
+		t.Errorf("el comprador no debería tener comisiones propias, vio %d", resumen.Total)
+	}
+
+	// ── 4) Un filtro de estado inválido se rechaza con 400 ─────────────────
+	req = httptest.NewRequest(http.MethodGet, "/api/comisiones/mias?estado=inventado", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenMedio)
+	resp, _ = app.Test(req)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("un estado inválido debería dar 400, dio %d", resp.StatusCode)
+	}
+
+	// ── 4b) El contador `ventas` lo sube la goroutine post-COMMIT ─────────
+	// Se espera con polling en vez de llamar al repositorio a mano: así se
+	// prueba el camino real de producción (checkout → goroutine → UPDATE) y
+	// no se depende de un sleep fijo.
+	esperarVentas(t, db, usuarios.referidoMedio, 100)
+	esperarVentas(t, db, usuarios.referidoArriba, 100)
+
+	var ventasComprador float64
+	if err := db.QueryRow(
+		`SELECT ventas FROM referidos WHERE id = $1`, usuarios.referidoComprador,
+	).Scan(&ventasComprador); err != nil {
+		t.Fatalf("leyendo ventas del comprador: %v", err)
+	}
+	if ventasComprador != 0 {
+		t.Errorf("el comprador nunca se acredita a sí mismo, tiene %.2f", ventasComprador)
+	}
+
+	// ── 5) Cancelar revierte el ledger y el contador de ventas ─────────────
+	// El contador vive fuera de la tx, así que lo forzamos a 100 como lo
+	// habría dejado la goroutine del checkout.
+	if _, err := db.Exec(
+		`UPDATE referidos SET ventas = 100 WHERE id = ANY($1)`,
+		pq.Array([]int{usuarios.referidoMedio, usuarios.referidoArriba}),
+	); err != nil {
+		t.Fatalf("preparando contadores: %v", err)
+	}
+
+	tokenAdmin := firmarTokenRol(t, 1, "admin@upse.edu.ec", "admin")
+	req = httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/api/admin/pedidos/%d/estado", pedidoID),
+		strings.NewReader(`{"estado":"cancelado"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tokenAdmin)
+	resp, _ = app.Test(req)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("cancelación: esperaba 204, obtuvo %d", resp.StatusCode)
+	}
+
+	tipo, _, _, _ = leerComision(t, db, usuarios.referidoMedio)
+	if tipo != "revertida" {
+		t.Errorf("tras cancelar, la comisión debería quedar revertida, quedó %q", tipo)
+	}
+	var ventas float64
+	if err := db.QueryRow(
+		`SELECT ventas FROM referidos WHERE id = $1`, usuarios.referidoMedio,
+	).Scan(&ventas); err != nil {
+		t.Fatalf("leyendo ventas: %v", err)
+	}
+	if ventas != 90 {
+		t.Errorf("tras cancelar, ventas debía bajar de 100 a 90, quedó %.2f", ventas)
+	}
+
+	limpiarCadenaMLM(t, db, usuarios)
+}
+
+// TestComisionesMias_requiereAuth blinda el ledger: sin token, 401.
+func TestComisionesMias_requiereAuth(t *testing.T) {
+	app := setupTestApp()
+	req := httptest.NewRequest(http.MethodGet, "/api/comisiones/mias", nil)
+	resp, _ := app.Test(req)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("sin token esperaba 401, obtuvo %d", resp.StatusCode)
+	}
+}
+
+// ── helpers de la cadena MLM ────────────────────────────────────────────────
+
+type cadenaMLM struct {
+	arriba, medio, comprador int // ids de usuarios
+	referidoArriba           int
+	referidoMedio            int
+	referidoComprador        int
+	productoID               int
+}
+
+// limpiarRestosCadena borra todo lo que dejó una corrida previa de esta
+// prueba. El orden importa: pedido_items tiene FK RESTRICT hacia productos y
+// comisiones tiene FK CASCADE desde pedidos, así que hay que empezar por los
+// pedidos.
+func limpiarRestosCadena(t *testing.T, db *sql.DB) {
+	t.Helper()
+	// Se filtra por email_usuario (NOT NULL) y no por usuario_id: al borrar el
+	// usuario, la FK ON DELETE SET NULL deja el pedido huérfano con
+	// usuario_id = NULL y se escaparía del filtro.
+	_, _ = db.Exec(`DELETE FROM pedido_items WHERE pedido_id IN (
+		SELECT id FROM pedidos WHERE email_usuario LIKE '%@prueba.com')`)
+	_, _ = db.Exec(`DELETE FROM pedidos WHERE email_usuario LIKE '%@prueba.com'`)
+	for _, email := range []string{"arriba@prueba.com", "medio@prueba.com", "comprador@prueba.com"} {
+		if _, err := db.Exec(`DELETE FROM usuarios WHERE email = $1`, email); err != nil {
+			t.Fatalf("[cadena] limpiando usuario %s: %v", email, err)
+		}
+	}
+	for _, codigo := range []string{"ARRIBA", "MEDIO", "COMPRADOR"} {
+		if _, err := db.Exec(`DELETE FROM referidos WHERE codigo = $1`, codigo); err != nil {
+			t.Fatalf("[cadena] limpiando nodo %s: %v", codigo, err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM productos WHERE nombre = 'Producto Cadena'`); err != nil {
+		t.Fatalf("[cadena] limpiando producto: %v", err)
+	}
+}
+
+// crearCadenaMLM crea 3 usuarios enlazados en forma de cadena y un producto
+// con stock. Devuelve los ids para poder deshacerlo.
+func crearCadenaMLM(t *testing.T, db *sql.DB) cadenaMLM {
+	t.Helper()
+	limpiarRestosCadena(t, db)
+
+	var c cadenaMLM
+	crear := func(email string) int {
+		var id int
+		if err := db.QueryRow(
+			`INSERT INTO usuarios (email, password_hash, rol, nombre, activo)
+			 VALUES ($1, 'x', 'cliente', $2, true) RETURNING id`,
+			email, email,
+		).Scan(&id); err != nil {
+			t.Fatalf("[cadena] usuario %s: %v", email, err)
+		}
+		return id
+	}
+	c.arriba = crear("arriba@prueba.com")
+	c.medio = crear("medio@prueba.com")
+	c.comprador = crear("comprador@prueba.com")
+
+	nodo := func(codigo string, parent *int) int {
+		var id int
+		if err := db.QueryRow(
+			`INSERT INTO referidos (codigo, parent_id) VALUES ($1, $2) RETURNING id`,
+			codigo, parent,
+		).Scan(&id); err != nil {
+			t.Fatalf("[cadena] nodo %s: %v", codigo, err)
+		}
+		return id
+	}
+	c.referidoArriba = nodo("ARRIBA", nil)
+	c.referidoMedio = nodo("MEDIO", &c.referidoArriba)
+	c.referidoComprador = nodo("COMPRADOR", &c.referidoMedio)
+
+	for _, par := range []struct{ usuario, referido int }{
+		{c.arriba, c.referidoArriba},
+		{c.medio, c.referidoMedio},
+		{c.comprador, c.referidoComprador},
+	} {
+		if _, err := db.Exec(
+			`UPDATE usuarios SET referido_id = $1 WHERE id = $2`, par.referido, par.usuario,
+		); err != nil {
+			t.Fatalf("[cadena] enlazando usuario %d: %v", par.usuario, err)
+		}
+		if _, err := db.Exec(
+			`UPDATE referidos SET usuario_id = $1 WHERE id = $2`, par.usuario, par.referido,
+		); err != nil {
+			t.Fatalf("[cadena] enlace inverso %d: %v", par.usuario, err)
+		}
+	}
+
+	if err := db.QueryRow(
+		`INSERT INTO productos (nombre, precio, categoria, stock, img)
+		 VALUES ('Producto Cadena', 100, 'prueba', 10, '') RETURNING id`,
+	).Scan(&c.productoID); err != nil {
+		t.Fatalf("[cadena] producto: %v", err)
+	}
+	return c
+}
+
+func limpiarCadenaMLM(t *testing.T, db *sql.DB, _ cadenaMLM) {
+	t.Helper()
+	limpiarRestosCadena(t, db)
+}
+
+// leerComision devuelve estado/monto/nivel de la comisión de un referido.
+func leerComision(t *testing.T, db *sql.DB, referidoID int) (estado string, monto float64, nivel int, err error) {
+	t.Helper()
+	var montoStr string
+	err = db.QueryRow(
+		`SELECT estado, monto, nivel FROM comisiones WHERE referido_id = $1
+		  ORDER BY id DESC LIMIT 1`, referidoID,
+	).Scan(&estado, &montoStr, &nivel)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	monto, err = strconv.ParseFloat(montoStr, 64)
+	return estado, monto, nivel, err
+}
+
+// esperarVentas espera a que el contador de un referido llegue al valor
+// esperado, con un tope de tiempo. Existe porque el contador se actualiza en
+// una goroutine después del COMMIT: el test debe observar el efecto, no
+// sustituirlo.
+func esperarVentas(t *testing.T, db *sql.DB, referidoID int, esperado float64) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var ventas float64
+		if err := db.QueryRow(
+			`SELECT ventas FROM referidos WHERE id = $1`, referidoID,
+		).Scan(&ventas); err == nil && ventas == esperado {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	var ventas float64
+	_ = db.QueryRow(`SELECT ventas FROM referidos WHERE id = $1`, referidoID).Scan(&ventas)
+	t.Errorf("referido %d: esperaba ventas=%.2f, sigue en %.2f", referidoID, esperado, ventas)
+}
+
+// appConRepo arma la app de Fiber contra un repositorio real.
+func appConRepo(repo interfaces.DBRepository, cache interfaces.CacheService) *fiber.App {
+	ctrl := routes.Controllers{
+		Auth:          controllers.NewAuthController(repo, cache),
+		Producto:      controllers.NewProductoController(repo, cache),
+		Network:       controllers.NewNetworkController(repo, cache),
+		Checkout:      controllers.NewCheckoutController(repo, cache),
+		Pedidos:       controllers.NewPedidosController(repo, cache),
+		Comisiones:    controllers.NewComisionesController(repo),
+		Liquidaciones: controllers.NewLiquidacionesController(repo),
+		Reportes:      controllers.NewReportesController(repo, cache),
+	}
+	app := fiber.New()
+	app.Use(middleware.SecurityHeaders())
+	app.Use(func(c *fiber.Ctx) error {
+		c.Locals(middleware.JWTSecretKey, testJWTSecret)
+		return c.Next()
+	})
+	routes.SetupRoutes(app, ctrl, testJWTSecret)
+	return app
+}
+
+func firmarToken(t *testing.T, sub int, email string) string {
+	return firmarTokenRol(t, sub, email, "cliente")
+}
+
+func firmarTokenRol(t *testing.T, sub int, email, rol string) string {
+	t.Helper()
+	tok, err := middleware.SignJWT(testJWTSecret, middleware.JWTClaims{
+		Sub: sub, Email: email, Rol: rol, Exp: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("SignJWT: %v", err)
+	}
+	return tok
+}
+
+// ── Liquidaciones (Sprint 3) ────────────────────────────────────────────────
+
+// TestLiquidacion_pagaLoPendienteYNoRepite cubre el ciclo completo del dinero:
+// el admin ve la deuda, liquida, las comisiones quedan 'pagada' enlazadas a la
+// liquidación, y liquidar otra vez responde 409 en vez de pagar dos veces.
+func TestLiquidacion_pagaLoPendienteYNoRepite(t *testing.T) {
+	db, err := sql.Open("postgres", dsnTest())
+	if err != nil {
+		t.Skipf("DB no disponible: %v", err)
+	}
+	if err := db.Ping(); err != nil {
+		t.Skipf("DB ping fail: %v", err)
+	}
+	defer db.Close()
+	config.DB = db
+	ensureSeed(t, db)
+
+	usuarios := crearCadenaMLM(t, db)
+	repo := repository.NewRepository(db)
+	app := appConRepo(repo, &MockCacheService{})
+	tokenAdmin := firmarTokenRol(t, 1, "admin@upse.edu.ec", "admin")
+
+	// Sin comisiones pendientes no hay nada que liquidar.
+	body := fmt.Sprintf(`{"referido_id":%d}`, usuarios.referidoMedio)
+	resp := pedirLiquidar(t, app, tokenAdmin, body)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("liquidar sin deuda debería dar 409, dio %d", resp.StatusCode)
+	}
+
+	// Generamos comisiones reales: el comprador compra.
+	tokenComprador := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
+	carrito := fmt.Sprintf(
+		`{"nombre":"Compra","email":"comprador@prueba.com","metodo_pago":"tarjeta",`+
+			`"items":[{"id":%d,"nombre":"P","precio":100,"cantidad":1}]}`, usuarios.productoID)
+	req := httptest.NewRequest(http.MethodPost, "/api/checkout", strings.NewReader(carrito))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tokenComprador)
+	if resp, _ := app.Test(req); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("checkout: esperaba 201, obtuvo %d", resp.StatusCode)
+	}
+
+	// La deuda del nivel 1 debe aparecer en la pantalla de liquidación.
+	resp = pedirDeuda(t, app, tokenAdmin)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deuda: esperaba 200, obtuvo %d", resp.StatusCode)
+	}
+	var deudas []models.DeudaDistribuidor
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &deudas); err != nil {
+		t.Fatalf("deuda ilegible: %v (%s)", err, bodyBytes)
+	}
+	if len(deudas) != 1 || deudas[0].ReferidoID != usuarios.referidoMedio {
+		t.Fatalf("esperaba deuda sólo del nivel 1, obtuve %+v", deudas)
+	}
+	if deudas[0].Total != 10 || deudas[0].Comisiones != 1 {
+		t.Errorf("deuda esperada 10.00 / 1 comisión, obtuve %.2f / %d",
+			deudas[0].Total, deudas[0].Comisiones)
+	}
+
+	// Liquidar.
+	body = fmt.Sprintf(`{"referido_id":%d}`, usuarios.referidoMedio)
+	resp = pedirLiquidar(t, app, tokenAdmin, body)
+	if resp.StatusCode != http.StatusCreated {
+		msg, _ := io.ReadAll(resp.Body)
+		t.Fatalf("liquidación: esperaba 201, obtuvo %d (%s)", resp.StatusCode, msg)
+	}
+	var liq models.Liquidacion
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &liq); err != nil {
+		t.Fatalf("liquidación ilegible: %v", err)
+	}
+	if liq.Total != 10 {
+		t.Errorf("la liquidación debía ser por 10.00, fue por %.2f", liq.Total)
+	}
+	if liq.PagadaEn == nil {
+		t.Error("una liquidación pagada debe traer pagada_en")
+	}
+
+	// El ledger pasó a 'pagada' y quedó enlazado a la liquidación.
+	estado, _, _, err := leerComision(t, db, usuarios.referidoMedio)
+	if err != nil {
+		t.Fatalf("leyendo la comisión: %v", err)
+	}
+	if estado != "pagada" {
+		t.Errorf("tras liquidar la comisión debe quedar pagada, quedó %q", estado)
+	}
+	var liquidacionID sql.NullInt64
+	if err := db.QueryRow(
+		`SELECT liquidacion_id FROM comisiones WHERE referido_id = $1 AND estado='pagada'`,
+		usuarios.referidoMedio,
+	).Scan(&liquidacionID); err != nil {
+		t.Fatalf("leyendo liquidacion_id: %v", err)
+	}
+	if !liquidacionID.Valid || int(liquidacionID.Int64) != liq.ID {
+		t.Errorf("la comisión debería apuntar a la liquidación %d, apunta a %v",
+			liq.ID, liquidacionID)
+	}
+
+	// La deuda desaparece para ese distribuidor.
+	resp = pedirDeuda(t, app, tokenAdmin)
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	_ = json.Unmarshal(bodyBytes, &deudas)
+	for _, d := range deudas {
+		if d.ReferidoID == usuarios.referidoMedio {
+			t.Errorf("tras liquidar, %d no debería aparecer en la deuda", usuarios.referidoMedio)
+		}
+	}
+
+	// Liquidar otra vez no puede pagar dos veces.
+	resp = pedirLiquidar(t, app, tokenAdmin, body)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("una segunda liquidación sin deuda debe dar 409, dio %d", resp.StatusCode)
+	}
+
+	// El historial muestra el pago.
+	resp = pedirHistorial(t, app, tokenAdmin, "/api/admin/liquidaciones")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("historial: esperaba 200, obtuvo %d", resp.StatusCode)
+	}
+	var paginas struct {
+		Data  []models.Liquidacion `json:"data"`
+		Total int                  `json:"total"`
+	}
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	if err := json.Unmarshal(bodyBytes, &paginas); err != nil {
+		t.Fatalf("historial ilegible: %v", err)
+	}
+	if paginas.Total < 1 || len(paginas.Data) < 1 {
+		t.Errorf("el historial debería incluir la liquidación recién creada, Total=%d", paginas.Total)
+	}
+
+	// El distribuidor ve sus cobros; el comprador (sin comisiones) no ve los
+	// del nivel 1.
+	tokenMedio := firmarToken(t, usuarios.medio, "medio@prueba.com")
+	resp = pedirHistorial(t, app, tokenMedio, "/api/liquidaciones/mias")
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	_ = json.Unmarshal(bodyBytes, &paginas)
+	if paginas.Total < 1 {
+		t.Error("el nivel 1 debería ver su liquidación en /api/liquidaciones/mias")
+	}
+	tokenComprador2 := firmarToken(t, usuarios.comprador, "comprador@prueba.com")
+	resp = pedirHistorial(t, app, tokenComprador2, "/api/liquidaciones/mias")
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	_ = json.Unmarshal(bodyBytes, &paginas)
+	if paginas.Total != 0 {
+		t.Errorf("el comprador no tiene pagos propios, vio %d", paginas.Total)
+	}
+
+	limpiarCadenaMLM(t, db, usuarios)
+}
+
+// TestLiquidar_requiereAdmin blinda la operación que mueve dinero.
+func TestLiquidar_requiereAdmin(t *testing.T) {
+	app := setupTestApp()
+
+	t.Run("sin token → 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/liquidaciones",
+			strings.NewReader(`{"referido_id":1}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("esperaba 401, obtuvo %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("token de cliente → 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/liquidaciones",
+			strings.NewReader(`{"referido_id":1}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", clientAuthHeader(t))
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("esperaba 403, obtuvo %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("referido_id inválido → 400", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/liquidaciones",
+			strings.NewReader(`{"referido_id":0}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", adminAuthHeader(t))
+		resp, _ := app.Test(req)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("esperaba 400, obtuvo %d", resp.StatusCode)
+		}
+	})
+}
+
+// ── helpers HTTP de liquidaciones ───────────────────────────────────────────
+
+func pedirLiquidar(t *testing.T, app *fiber.App, token, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/liquidaciones", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("POST liquidaciones: %v", err)
+	}
+	return resp
+}
+
+func pedirDeuda(t *testing.T, app *fiber.App, token string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/liquidaciones/deuda", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("GET deuda: %v", err)
+	}
+	return resp
+}
+
+func pedirHistorial(t *testing.T, app *fiber.App, token, path string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	return resp
 }
