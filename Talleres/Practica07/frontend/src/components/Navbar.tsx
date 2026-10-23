@@ -1,8 +1,8 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { useCart } from "../context/CartContext";
-import { useAuth } from "../context/AuthContext";
-import { useSidebar } from "../context/SidebarContext";
+import { useCart } from "../context/cart";
+import { useAuth } from "../context/auth";
+import { useSidebar } from "../context/sidebar";
 import { GiHamburgerMenu } from "react-icons/gi";
 
 const Navbar = () => {

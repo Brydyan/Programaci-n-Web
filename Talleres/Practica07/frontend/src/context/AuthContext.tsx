@@ -1,41 +1,23 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { loginAPI, registerAPI } from '../services/api';
+import { purgarCachePWA } from '../services/pwaCache';
+import {
+  AuthContext,
+  EMAIL_KEY,
+  ROL_KEY,
+  TOKEN_KEY,
+  readRol,
+} from './auth';
 import type { LoginResponse, Rol } from '../types/api';
-
-interface AuthContextType {
-  isAuthenticated: boolean;
-  userEmail: string | null;
-  rol: Rol | null;
-  login: (email: string, password: string) => Promise<LoginResponse>;
-  register: (nombre: string, email: string, password: string, ref?: string) => Promise<void>;
-  logout: () => void;
-  isLoading: boolean;
-  error: string | null;
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const TOKEN_KEY = 'token';
-const EMAIL_KEY = 'userEmail';
-const ROL_KEY = 'userRol';
-
-const readRol = (): Rol | null => {
-  const r = localStorage.getItem(ROL_KEY);
-  return r === 'admin' || r === 'cliente' ? r : null;
-};
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth debe ser usado dentro de un AuthProvider');
-  }
-  return context;
-};
 
 interface AuthProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Proveedor de sesión. Guarda token/email/rol en localStorage y expone
+ * login, register y logout. El hook `useAuth` vive en `auth.ts`.
+ */
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
     () => !!localStorage.getItem(TOKEN_KEY),
@@ -71,6 +53,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EMAIL_KEY);
     localStorage.removeItem(ROL_KEY);
+    // Purga el catálogo cacheado por el service worker. Se dispara sin await
+    // a propósito: el cambio de pantalla no debe esperar a una promesa de
+    // red/almacenamiento, y si falla no hay nada que recuperar (el catálogo es
+    // público y se vuelve a pedir al backend).
+    void purgarCachePWA();
     setIsAuthenticated(false);
     setUserEmail(null);
     setRol(null);

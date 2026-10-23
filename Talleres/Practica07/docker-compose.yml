@@ -8,7 +8,11 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Las migraciones se aplican en orden alfabético por el entrypoint de
+      # Postgres, sólo en el PRIMER arranque del volumen. Para reaplicar sobre
+      # un volumen existente usa `make db-migrate` / `make db-reset`.
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d multicatalogo"]
       interval: 5s
@@ -37,3 +41,7 @@ services:
       redis:
         condition: service_started
     restart: on-failure
+
+volumes:
+  pgdata:
+    name: multicatalogo_pgdata

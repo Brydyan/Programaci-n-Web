@@ -1,4 +1,4 @@
-import { useCart } from '../context/CartContext';
+import { useCart } from '../context/cart';
 import { useEffect, useState } from 'react';
 import { getProductosAPI, type Producto } from '../services/api';
 import { Link } from 'react-router-dom';

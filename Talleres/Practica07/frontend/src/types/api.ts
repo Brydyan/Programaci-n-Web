@@ -170,19 +170,40 @@ export const TRANSICIONES_VALIDAS: Record<EstadoPedidoFE, EstadoPedidoFE[]> = {
 // ── Red / Comisiones ────────────────────────────────────────
 export interface NodoRed {
   id: number;
+  codigo: string;
   nombre: string;
   nivel: number;
   ventas: number;
   hijos?: NodoRed[];
 }
+export type EstadoComision = 'pendiente' | 'aprobada' | 'pagada' | 'revertida';
+
+/** Fila del ledger: quién cobró, cuánto, en qué nivel y por qué pedido. */
 export interface Comision {
   id: number;
-  pedido_id: number;
+  pedido_id?: number;
+  referido_id?: number;
   nivel: number;
   porcentaje: number;
   monto: number;
-  estado: 'pendiente' | 'aprobada' | 'pagada' | 'revertida';
+  estado: EstadoComision;
   creado_en: string;
+}
+
+/** Agregado por estado — responde "¿cuánto me deben?". */
+export interface ComisionTotal {
+  estado: EstadoComision;
+  total: number;
+  cantidad: number;
+}
+
+/** Respuesta de /api/comisiones/mias y /api/admin/comisiones. */
+export interface ComisionResumen {
+  data: Comision[];
+  page: number;
+  limit: number;
+  total: number;
+  totales: ComisionTotal[];
 }
 
 // ── Liquidaciones ───────────────────────────────────────────
@@ -197,17 +218,40 @@ export interface Liquidacion {
 }
 
 // ── Reportes ────────────────────────────────────────────────
+// Mirror exacto de openapi.yaml → components.schemas.*Reportes*.
+// Si un campo pasa a camelCase aquí, el backend ya no casa y la tarjeta
+// del dashboard muestra `undefined` en vez de fallar.
+
+/** KPIs del periodo. `total_vendido` y `num_pedidos` excluyen cancelados. */
 export interface ReporteResumen {
   total_vendido: number;
   num_pedidos: number;
   ticket_promedio: number;
   comisiones_devengadas: number;
 }
+
+/** Fila del ranking de productos. `nombre` es la foto histórica del pedido. */
 export interface TopProducto {
   producto_id: number;
   nombre: string;
   unidades: number;
   ingresos: number;
+}
+
+/**
+ * Fila del ranking de distribuidores.
+ *
+ * `ventas` viene del contador acumulado `referidos.ventas`, que el backend
+ * actualiza best-effort tras el commit del checkout: puede ir un instante por
+ * detrás de `comisiones`, que sí se lee del ledger. Para cifras de auditoría
+ * usar `/api/admin/comisiones`.
+ */
+export interface TopReferido {
+  referido_id: number;
+  codigo: string;
+  nombre: string;
+  ventas: number;
+  comisiones: number;
 }
 
 // ── Health ──────────────────────────────────────────────────

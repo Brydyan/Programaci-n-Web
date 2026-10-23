@@ -1,12 +1,10 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from 'react';
+import { SidebarContext } from './sidebar';
 
-interface SidebarContextType {
-  isCollapsed: boolean;
-  toggleCollapsed: () => void;
-}
-
-const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
-
+/**
+ * Proveedor del sidebar colapsable.
+ * El hook `useSidebar` vive en `sidebar.ts`.
+ */
 export const SidebarProvider = ({ children }: { children: ReactNode }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
 
@@ -19,12 +17,4 @@ export const SidebarProvider = ({ children }: { children: ReactNode }) => {
       {children}
     </SidebarContext.Provider>
   );
-};
-
-export const useSidebar = () => {
-  const context = useContext(SidebarContext);
-  if (!context) {
-    throw new Error("useSidebar debe ser usado dentro de SidebarProvider");
-  }
-  return context;
 };

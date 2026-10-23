@@ -1,5 +1,5 @@
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { useCart } from '../context/CartContext';
+import { useCart } from '../context/cart';
 import { useEffect } from 'react';
 
 interface PedidoState {
@@ -14,13 +14,16 @@ const Confirmacion = () => {
   const { clearCart } = useCart();
   const pedido = location.state?.pedido as PedidoState | undefined;
 
+  // Se vacía el carrito al entrar con un pedido en el state de navegación.
+  // `clearCart` es estable (useCallback en el provider), así que depender de
+  // él no re-dispara el efecto.
   useEffect(() => {
     if (!pedido) {
       navigate('/', { replace: true });
       return;
     }
     clearCart();
-  }, []);
+  }, [pedido, navigate, clearCart]);
 
   if (!pedido) return null;
 

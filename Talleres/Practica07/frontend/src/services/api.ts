@@ -1,8 +1,11 @@
 // Capa de servicios: funciones semánticas por dominio.
 // Para peticiones nuevas, preferir apiFetch de ./http.
 import type {
+  ComisionResumen,
+  EstadoComision,
   Health,
   LoginResponse,
+  NodoRed,
   RegisterRequest,
   RegisterResponse,
   Rol,
@@ -38,19 +41,18 @@ export interface Producto {
   precio: number;
   img: string;
 }
-export interface Referido {
-  id: number;
-  nombre: string;
-  nivel: string;
-  ventas: string;
-}
-// payload que acepta el BE actual (se endurecerá en F3 con ciudad/telefono requeridos)
-export interface CheckoutRequestLegacy {
-  nombre: string;
-  email: string;
+// Payload de POST /api/checkout.
+//
+// Ya NO es "legacy": el backend endureció el contrato y `ciudad`/`telefono`
+// pasaron a ser obligatorios (openapi.yaml → CheckoutRequest, `required`).
+// `email` desapareció: la identidad sale del JWT y el DTO del backend la
+// declara con `json:"-"`, así que mandarlo no sirve de nada y además
+// sugería que el servidor lo usaría.
+export interface CheckoutPayload {
+  nombre?: string;
   direccion: string;
-  ciudad?: string;
-  telefono?: string;
+  ciudad: string;
+  telefono: string;
   metodo_pago: string;
   items: { id: number; nombre: string; precio: number; cantidad: number }[];
 }
@@ -76,11 +78,8 @@ export const getProductosAPI = async (): Promise<Producto[]> =>
 export const getProductoPorIdAPI = async (id: number | string): Promise<Producto> =>
   legacyFetch<Producto>(`/api/productos/${id}`);
 
-export const getRedAPI = async (): Promise<Referido[]> =>
-  legacyFetch<Referido[]>('/api/red');
-
 export const checkoutAPI = async (
-  payload: CheckoutRequestLegacy,
+  payload: CheckoutPayload,
 ): Promise<PedidoLegacy> =>
   legacyFetch<PedidoLegacy>('/api/checkout', {
     method: 'POST',
@@ -93,3 +92,18 @@ export const registerAPI = (payload: RegisterRequest): Promise<RegisterResponse>
   apiFetch<RegisterResponse>('/api/register', { method: 'POST', body: payload });
 
 export const healthAPI = (): Promise<Health> => apiFetch<Health>('/api/health', { method: 'GET' });
+
+/**
+ * Subárbol del usuario autenticado (Sprint 1). Usa apiFetch para que viaje el
+ * token: /api/red/mia está detrás de RequireAuth y devuelve el árbol anidado.
+ * `GET /api/red` (vista global) queda reservada al admin.
+ */
+export const getRedMiaAPI = (): Promise<NodoRed[]> =>
+  apiFetch<NodoRed[]>('/api/red/mia', { method: 'GET' });
+
+/** Ledger del usuario autenticado (Sprint 2). Sin paginación: el panel de
+ *  "Mis comisiones" muestra las más recientes y los totales por estado. */
+export const getComisionesMiasAPI = (params?: { estado?: EstadoComision }): Promise<ComisionResumen> => {
+  const qs = params?.estado ? `?estado=${encodeURIComponent(params.estado)}` : '';
+  return apiFetch<ComisionResumen>(`/api/comisiones/mias${qs}`, { method: 'GET' });
+};

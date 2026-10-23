@@ -1,121 +1,302 @@
-import { useEffect, useState } from 'react';
-import { getRedAPI, type Referido } from '../services/api';
+import { useCallback, useEffect, useState } from 'react';
+import { getComisionesMiasAPI, getRedMiaAPI } from '../services/api';
+import {
+  getErrorMessage,
+  type ComisionResumen,
+  type EstadoComision,
+  type NodoRed,
+} from '../types/api';
+import { useAuth } from '../context/auth';
+
+/**
+ * "Mi Red" — Sprint 1.
+ *
+ * Muestra el subárbol del usuario autenticado (GET /api/red/mia), no el árbol
+ * global: lo accionable para un distribuidor es quién depende de él.
+ *
+ * El nodo raíz (nivel 0) es el propio usuario y su `codigo` es el que se
+ * comparte en el link de invitación /registro?ref=CODIGO.
+ */
+
+const money = (n: number) => `$${n.toFixed(2)}`;
+
+/** Totales de toda la rama, para la tarjeta resumen. */
+const resumen = (nodos: NodoRed[]) =>
+  nodos.reduce(
+    (acc, n) => {
+      const hijos = resumen(n.hijos ?? []);
+      acc.nodos += 1 + hijos.nodos;
+      acc.ventas += n.ventas + hijos.ventas;
+      return acc;
+    },
+    { nodos: 0, ventas: 0 },
+  );
 
 const MiRed = () => {
-  const [referidos, setReferidos] = useState<Referido[]>([]);
+  const { userEmail } = useAuth();
+  const [arbol, setArbol] = useState<NodoRed[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copiado, setCopiado] = useState(false);
+  const [comisiones, setComisiones] = useState<ComisionResumen | null>(null);
 
-  const fetchRed = async () => {
+  const cargar = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await getRedAPI();
-      setReferidos(data);
+      setArbol(await getRedMiaAPI());
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Error al conectar con el servidor para obtener la red de referidos'
-      );
-      // Fallback a arreglo vacío para prevenir bloqueos en UI
-      setReferidos([]);
+      setError(getErrorMessage(err));
+      setArbol([]);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchRed();
   }, []);
+
+  // La carga inicial corre en un microtask y está guardada por `vivo`: así el
+  // setState ocurre tras el primer await (nada de setState síncrono en el
+  // efecto) y no se pinta nada si el componente ya se desmontó.
+  useEffect(() => {
+    let vivo = true;
+    void (async () => {
+      try {
+        const data = await getRedMiaAPI();
+        if (vivo) setArbol(data);
+      } catch (err) {
+        if (!vivo) return;
+        setError(getErrorMessage(err));
+        setArbol([]);
+      }
+      // El ledger es un recurso aparte: si falla, la red sigue siendo útil.
+      try {
+        const ledger = await getComisionesMiasAPI();
+        if (vivo) setComisiones(ledger);
+      } catch {
+        if (vivo) setComisiones(null);
+      } finally {
+        if (vivo) setIsLoading(false);
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  // El nodo propio es el nivel 0 de la raíz que devuelve el endpoint.
+  const miNodo = arbol[0];
+  const linkReferido = miNodo
+    ? `${window.location.origin}/registro?ref=${miNodo.codigo}`
+    : '';
+
+  const copiarLink = async () => {
+    try {
+      await navigator.clipboard.writeText(linkReferido);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    } catch {
+      // Clipboard bloqueado (contexto no seguro): el link sigue visible
+      // para copiarlo a mano, así que no es un fallo que warranta alerta.
+    }
+  };
 
   if (isLoading) {
     return (
       <div className="flex justify-center items-center min-h-96">
-        <p className="text-slate-600 font-medium">Cargando red de referidos...</p>
+        <p className="text-slate-600 font-medium">Cargando tu red...</p>
       </div>
     );
   }
 
+  const totales = resumen(arbol);
+
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
-        <h1 className="text-2xl font-bold text-slate-800">Mi Red de Referidos</h1>
-        {error && (
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Mi Red</h1>
+          <p className="text-sm text-slate-500">{userEmail}</p>
+        </div>
+        {!error && arbol.length > 0 && (
           <button
-            onClick={fetchRed}
-            className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-md font-medium transition self-start"
+            onClick={cargar}
+            className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
           >
-            Reintentar conexión
+            Actualizar
           </button>
         )}
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-600 p-4 rounded-lg border border-red-200 mb-6 flex items-center justify-between">
+        <div className="bg-red-50 text-red-600 p-4 rounded-lg border border-red-200 mb-6">
           <p className="text-sm font-medium">{error}</p>
+          <button
+            onClick={cargar}
+            className="mt-3 text-sm bg-white border border-red-300 px-4 py-2 rounded-md font-medium min-h-[44px]"
+          >
+            Reintentar
+          </button>
         </div>
       )}
 
-      {referidos.length === 0 && !error ? (
+      {!error && arbol.length === 0 && (
         <div className="bg-white rounded-lg border border-slate-200 p-8 text-center text-slate-500">
-          No hay miembros registrados en tu red actualmente.
+          Todavía no tienes referidos. Comparte tu link para que tu red crezca.
         </div>
-      ) : (
+      )}
+
+      {!error && miNodo && (
         <>
-          {/* Vista Desktop - Tabla */}
-          <div className="hidden md:block bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="p-4 font-semibold text-slate-600">Nombre</th>
-                  <th className="p-4 font-semibold text-slate-600">Jerarquía</th>
-                  <th className="p-4 font-semibold text-slate-600">Ventas Mensuales</th>
-                </tr>
-              </thead>
-              <tbody>
-                {referidos.map((ref) => (
-                  <tr
-                    key={ref.id}
-                    className="border-b border-slate-100 hover:bg-slate-50 transition"
-                  >
-                    <td className="p-4 text-slate-700 font-medium">{ref.nombre}</td>
-                    <td className="p-4 text-slate-500">{ref.nivel}</td>
-                    <td className="p-4 text-indigo-600 font-semibold">{ref.ventas}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Link de invitación: es la puerta de crecimiento del MLM. */}
+          <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 shadow-sm">
+            <p className="text-xs font-semibold uppercase text-slate-500 mb-2">
+              Tu link de referido
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+              <code className="flex-1 bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-700 break-all">
+                {linkReferido}
+              </code>
+              <button
+                onClick={copiarLink}
+                className="min-h-[44px] px-4 py-2 bg-indigo-600 text-white rounded-md font-semibold hover:bg-indigo-700 transition text-sm"
+              >
+                {copiado ? '¡Copiado!' : 'Copiar'}
+              </button>
+            </div>
           </div>
 
-          {/* Vista Móvil - Cards */}
-          <div className="md:hidden grid grid-cols-1 gap-4">
-            {referidos.map((ref) => (
-              <div
-                key={ref.id}
-                className="bg-white rounded-lg border border-slate-200 p-4 shadow-sm"
-              >
-                <div className="mb-3 pb-3 border-b border-slate-100">
-                  <h3 className="text-lg font-semibold text-slate-800">{ref.nombre}</h3>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-500">Jerarquía:</span>
-                    <span className="text-sm font-medium text-slate-700">{ref.nivel}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-500">Ventas Mensuales:</span>
-                    <span className="text-sm font-semibold text-indigo-600">
-                      {ref.ventas}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
+          {/* Resumen de la rama. */}
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="bg-white p-4 rounded-lg border border-slate-200">
+              <p className="text-xs uppercase font-semibold text-slate-500">En mi red</p>
+              <p className="text-2xl font-bold text-indigo-600">{totales.nodos}</p>
+            </div>
+            <div className="bg-white p-4 rounded-lg border border-slate-200">
+              <p className="text-xs uppercase font-semibold text-slate-500">Ventas generadas</p>
+              <p className="text-2xl font-bold text-indigo-600">{money(totales.ventas)}</p>
+            </div>
           </div>
+
+          <PanelComisiones resumen={comisiones} />
+
+          <Rama nodos={miNodo.hijos ?? []} nivel={1} />
         </>
       )}
     </div>
+  );
+};
+
+/** Etiqueta y color por estado del ledger. */
+const ESTADO_COMISION: Record<EstadoComision, { texto: string; clase: string }> = {
+  pendiente: { texto: 'Pendiente', clase: 'bg-amber-100 text-amber-800' },
+  aprobada: { texto: 'Aprobada', clase: 'bg-sky-100 text-sky-800' },
+  pagada: { texto: 'Pagada', clase: 'bg-emerald-100 text-emerald-800' },
+  revertida: { texto: 'Revertida', clase: 'bg-slate-200 text-slate-600' },
+};
+
+/**
+ * "Mis comisiones": el ledger del usuario con los totales por estado. Es la
+ * respuesta a "¿cuánto me deben y por qué pedidos?".
+ */
+const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
+  if (!resumen) {
+    return (
+      <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 text-sm text-slate-500">
+        No se pudo cargar el detalle de tus comisiones.
+      </div>
+    );
+  }
+  if (resumen.total === 0) {
+    return (
+      <div className="bg-white rounded-lg border border-dashed border-slate-300 p-4 mb-6 text-sm text-slate-500">
+        Aún no tienes comisiones registradas. Aparecen cuando alguien de tu red compra.
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 shadow-sm">
+      <p className="text-xs font-semibold uppercase text-slate-500 mb-3">Mis comisiones</p>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        {resumen.totales.map((t) => {
+          const est = ESTADO_COMISION[t.estado];
+          return (
+            <div key={t.estado} className={`rounded-md px-3 py-2 ${est.clase}`}>
+              <p className="text-xs font-medium">{est.texto}</p>
+              <p className="text-sm font-bold">{money(t.total)}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-slate-200">
+            <tr>
+              <th className="py-2 pr-3 font-semibold text-slate-600">Pedido</th>
+              <th className="py-2 pr-3 font-semibold text-slate-600">Nivel</th>
+              <th className="py-2 pr-3 font-semibold text-slate-600">%</th>
+              <th className="py-2 pr-3 font-semibold text-slate-600">Monto</th>
+              <th className="py-2 font-semibold text-slate-600">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {resumen.data.map((c) => {
+              const est = ESTADO_COMISION[c.estado];
+              return (
+                <tr key={c.id} className="border-b border-slate-100">
+                  <td className="py-2 pr-3 text-slate-700">#{c.pedido_id ?? '—'}</td>
+                  <td className="py-2 pr-3 text-slate-500">{c.nivel}</td>
+                  <td className="py-2 pr-3 text-slate-500">{c.porcentaje}%</td>
+                  <td className="py-2 pr-3 font-semibold text-slate-800">{money(c.monto)}</td>
+                  <td className="py-2">
+                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${est.clase}`}>
+                      {est.texto}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+/** Una rama del árbol. Se dibuja con líneas de guía, mobile-first. */
+const Rama = ({ nodos, nivel }: { nodos: NodoRed[]; nivel: number }) => {
+  if (nodos.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border border-dashed border-slate-300 p-6 text-center text-slate-500 text-sm">
+        Nadie se ha unido a tu red todavía.
+      </div>
+    );
+  }
+
+  return (
+    <ul className={nivel === 1 ? 'space-y-3' : 'space-y-2 mt-2'}>
+      {nodos.map((n) => (
+        <li key={n.id}>
+          <div
+            className={`bg-white rounded-lg border border-slate-200 p-3 shadow-sm ${
+              nivel === 1 ? 'border-l-4 border-l-indigo-400' : 'border-l-4 border-l-slate-300 ml-3'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800 truncate">{n.nombre}</p>
+                <p className="text-xs text-slate-500">
+                  Nivel {n.nivel} · <span className="font-mono">{n.codigo}</span>
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-indigo-600 shrink-0">{money(n.ventas)}</p>
+            </div>
+          </div>
+          {n.hijos && n.hijos.length > 0 && <Rama nodos={n.hijos} nivel={nivel + 1} />}
+        </li>
+      ))}
+    </ul>
   );
 };
 

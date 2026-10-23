@@ -7,8 +7,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"multicatalogo-backend/domain"
-	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/interfaces"
+	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/middleware"
 	"multicatalogo-backend/models"
 )
@@ -173,6 +173,11 @@ func (pc *PedidosController) PatchEstado(c *fiber.Ctx) error {
 				string(middleware.CodeInternal), "error cambiando estado", err.Error())
 		}
 	}
+
+	// Cualquier cambio de estado altera los agregados del dashboard (cancelar
+	// resta venta; entregado la suma). Se sube la versión en vez de purgar
+	// claves: las viejas dejan de direccionarse y expiran por TTL.
+	InvalidarReportes(context.Background(), pc.cache)
 
 	// Si fue cancelación, el stock cambió → invalidar caché público.
 	if domain.EstadoPedido(d.Estado) == domain.EstadoCancelado {

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -8,18 +9,32 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"multicatalogo-backend/domain"
-	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/interfaces"
+	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/middleware"
 	"multicatalogo-backend/models"
 )
 
 type AuthController struct {
-	repo interfaces.DBRepository
+	repo  interfaces.DBRepository
+	cache interfaces.CacheService
 }
 
-func NewAuthController(repo interfaces.DBRepository) *AuthController {
-	return &AuthController{repo: repo}
+func NewAuthController(repo interfaces.DBRepository, cache interfaces.CacheService) *AuthController {
+	return &AuthController{repo: repo, cache: cache}
+}
+
+// invalidarRed sube la versión del caché de la red (ver NetworkController):
+// un alta crea un nodo nuevo colgado del referente, así que cualquier árbol
+// cacheado quedó desactualizado.
+func (ac *AuthController) invalidarRed() {
+	if ac.cache == nil {
+		return
+	}
+	if _, err := ac.cache.Increment(context.Background(), redVersionKey); err != nil {
+		// Best-effort: si Redis falla, la red se recalcula desde PostgreSQL.
+		_ = err
+	}
 }
 
 // LoginResponse es la forma canónica de la respuesta de POST /api/login,
@@ -144,8 +159,17 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 		)
 	}
 
-	// Validación extra del código de referido: el DTO sólo exige alphanum,
-	// pero el alfabeto del sistema excluye 0/1/I para legibilidad.
+	// Segunda capa de validación del código de referido. En la práctica el
+	// DTO (alphanum, 2..8) ya rechaza todo lo que esta función rechaza, así
+	// que actúa como red de seguridad, no como filtro principal.
+	//
+	// OJO: CodigoEsValido es deliberadamente LAXO con el alfabeto — acepta
+	// I/O/0/1 para poder validar los códigos seed ("TU", "LUIS", "ADMIN"),
+	// que no siguen el alfabeto estricto con el que se generan los nuevos.
+	// Los códigos nuevos sí usan ese alfabeto estricto (ver
+	// domain.codigoRefAlphabet). No "endurecer" esta función sin migrar los
+	// códigos preexistentes: los registros seed dejarían de aceptar su propio
+	// código de referido.
 	if req.Ref != "" && !domain.CodigoEsValido(strings.ToUpper(req.Ref)) {
 		return middleware.RespondError(c,
 			fiber.StatusBadRequest,
@@ -186,6 +210,8 @@ func (ac *AuthController) Register(c *fiber.Ctx) error {
 			)
 		}
 	}
+
+	ac.invalidarRed()
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"id":         result.UsuarioID,

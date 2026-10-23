@@ -1,7 +1,7 @@
 import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Navbar from "./Navbar";
-import { useSidebar } from "../context/SidebarContext";
+import { useSidebar } from "../context/sidebar";
 const Layout = () => {
     const { isCollapsed, toggleCollapsed } = useSidebar();
 

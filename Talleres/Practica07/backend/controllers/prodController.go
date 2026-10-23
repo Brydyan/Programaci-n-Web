@@ -10,8 +10,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
 
-	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/interfaces"
+	"multicatalogo-backend/internal/dto"
 	"multicatalogo-backend/middleware"
 	"multicatalogo-backend/models"
 )
@@ -111,8 +111,8 @@ func (pc *ProductoController) GetProductoPorID(c *fiber.Ctx) error {
 // Respuesta: { data, page, limit, total }
 func (pc *ProductoController) AdminList(c *fiber.Ctx) error {
 	filtro := interfaces.ProductoFiltro{
-		Q:    c.Query("q", ""),
-		Page: parseIntDefault(c.Query("page", ""), 1),
+		Q:     c.Query("q", ""),
+		Page:  parseIntDefault(c.Query("page", ""), 1),
 		Limit: parseIntDefault(c.Query("limit", ""), 20),
 	}
 	if rawActivo := c.Query("activo", ""); rawActivo != "" {

@@ -194,10 +194,16 @@ components:
     # ---------- Red / Comisiones ----------
     NodoRed:
       type: object
+      required: [id, codigo, nombre, nivel, ventas]
       properties:
         id: { type: integer }
-        nombre: { type: string }
-        nivel: { type: integer }
+        codigo:
+          type: string
+          description: Código de invitación. El del nodo raíz es el link /registro?ref=CODIGO.
+        nombre:
+          type: string
+          description: Nombre del usuario vinculado; cae al código si el nodo no tiene cuenta.
+        nivel: { type: integer, description: 'Profundidad desde la raíz: 0 es el propio usuario en /red/mia.' }
         ventas: { type: number, format: float }
         hijos:
           type: array
@@ -208,9 +214,26 @@ components:
       properties:
         id: { type: integer }
         pedido_id: { type: integer }
+        referido_id: { type: integer }
         nivel: { type: integer }
         porcentaje: { type: number, format: float }
         monto: { type: number, format: float }
+        estado: { type: string, enum: [pendiente, aprobada, pagada, revertida] }
+        creado_en: { type: string, format: date-time }
+    ComisionTotal:
+      type: object
+      properties:
+        estado: { type: string, enum: [pendiente, aprobada, pagada, revertida] }
+        total: { type: number, format: float }
+        cantidad: { type: integer }
+    ComisionResumen:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Comision' } }
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totales: { type: array, items: { $ref: '#/components/schemas/ComisionTotal' } }
         estado:
           type: string
           enum: [pendiente, aprobada, pagada, revertida]
@@ -246,6 +269,25 @@ components:
         nombre: { type: string }
         unidades: { type: integer }
         ingresos: { type: number, format: float }
+
+    TopReferido:
+      type: object
+      properties:
+        referido_id: { type: integer }
+        codigo: { type: string }
+        nombre: { type: string, description: 'nombre del usuario; cae al código si el referido no tiene usuario' }
+        ventas: { type: number, format: float }
+        comisiones: { type: number, format: float }
+
+    DeudaDistribuidor:
+      type: object
+      properties:
+        referido_id: { type: integer }
+        codigo: { type: string }
+        nombre: { type: string }
+        total: { type: number, format: float, description: 'suma de las comisiones pendientes' }
+        comisiones: { type: integer, description: 'cuántas comisiones componen la deuda' }
+        ultima_pago: { type: string, format: date-time }
 
     # ---------- Health ----------
     Health:
@@ -319,6 +361,21 @@ paths:
       tags: [catalog]
       security: []
       summary: Detalle de producto
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Producto' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/producto/{id}:
+    get:
+      tags: [catalog]
+      security: []
+      summary: Detalle de producto (alias singular)
+      description: >
+        Alias en singular de `/api/productos/{id}`. Mismo handler y misma
+        respuesta. Existe por compatibilidad con clientes antiguos; no es un
+        typo. Nuevo código debe usar la ruta plural.
       parameters:
         - { in: path, name: id, required: true, schema: { type: integer } }
       responses:
@@ -448,7 +505,7 @@ paths:
   /api/red:
     get:
       tags: [network]
-      summary: Red global (admin, cacheado)
+      summary: Red global (solo admin, cacheada). Un distribuidor usa /api/red/mia.
       responses:
         '200': { description: ok, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/NodoRed' } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -457,7 +514,7 @@ paths:
   /api/red/mia:
     get:
       tags: [network]
-      summary: Subárbol del usuario del token
+      summary: Subárbol del usuario del token (claim `sub`)
       responses:
         '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/NodoRed' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -465,19 +522,67 @@ paths:
   /api/comisiones/mias:
     get:
       tags: [commissions]
-      summary: Ledger del usuario
+      summary: Ledger del usuario del token
+      description: >-
+        La identidad sale del claim `sub`; no acepta un referido_id por query
+        para que nadie pueda leer el ledger de otro distribuidor.
       parameters:
         - { in: query, name: estado, schema: { type: string, enum: [pendiente, aprobada, pagada, revertida] } }
       responses:
-        '200': { description: ok, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Comision' } } } } }
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComisionResumen' }
+        '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/comisiones:
+    get:
+      tags: [commissions]
+      summary: Auditoría del ledger (admin)
+      parameters:
+        - { in: query, name: estado, schema: { type: string, enum: [pendiente, aprobada, pagada, revertida] } }
+        - { in: query, name: referido_id, schema: { type: integer } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComisionResumen' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/liquidaciones/deuda:
+    get:
+      tags: [settlements]
+      summary: Deuda por distribuidor (admin)
+      description: >
+        Sólo incluye distribuidores con comisiones en estado `pendiente`: es la
+        lista de trabajo antes de pulsar liquidar. Responde 409 si se intenta
+        liquidar a alguien sin deuda.
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeudaDistribuidor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/admin/liquidaciones:
     get:
       tags: [settlements]
       summary: Historial de liquidaciones (admin)
+      parameters:
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
       responses:
         '200': { description: ok }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [settlements]
@@ -509,34 +614,80 @@ paths:
     get:
       tags: [reports]
       summary: KPIs del periodo (admin)
+      description: >
+        Excluye los pedidos `cancelado`: al cancelar se devuelve el stock y se
+        revierten las comisiones, así que contarlos como venta infla la
+        facturación. `hasta` es INCLUSIVO para el usuario (un `hasta=2026-12-31`
+        incluye todo ese día) y se aplica como cota superior exclusiva del día
+        siguiente. Ambos parámetros son opcionales; sin ellos, el resumen es
+        histórico completo.
       parameters:
-        - { in: query, name: desde, schema: { type: string, format: date } }
-        - { in: query, name: hasta, schema: { type: string, format: date } }
+        - { in: query, name: desde, schema: { type: string, format: date }, description: ' inclusivo' }
+        - { in: query, name: hasta, schema: { type: string, format: date }, description: ' inclusivo' }
       responses:
         '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReporteResumen' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/reportes/top-productos:
     get:
       tags: [reports]
+      summary: Ranking de productos por ingresos (admin)
       parameters:
-        - { in: query, name: limit, schema: { type: integer, default: 10, maximum: 50 } }
+        - { in: query, name: limit, schema: { type: integer, default: 10, minimum: 1, maximum: 50 } }
       responses:
-        '200': { description: ok }
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TopProducto' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/reportes/top-referidos:
     get:
       tags: [reports]
+      summary: Ranking de distribuidores por ventas (admin)
+      description: >
+        `ventas` viene del contador acumulado `referidos.ventas`, que se
+        actualiza best-effort tras el commit del checkout y por tanto puede ir
+        un instante por detrás de `comisiones`, que se lee del ledger. Para
+        auditoría usar `/api/admin/comisiones`, no este ranking.
       parameters:
-        - { in: query, name: limit, schema: { type: integer, default: 10, maximum: 50 } }
+        - { in: query, name: limit, schema: { type: integer, default: 10, minimum: 1, maximum: 50 } }
       responses:
-        '200': { description: ok }
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TopReferido' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/reportes/comisiones-pendientes:
     get:
       tags: [reports]
+      summary: Ledger pendiente de liquidar (admin)
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 10, minimum: 1, maximum: 50 } }
       responses:
-        '200': { description: ok }
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Comision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
 # ─────────────────────────────────────────────────────────────
 # RESPUESTAS REUTILIZABLES
