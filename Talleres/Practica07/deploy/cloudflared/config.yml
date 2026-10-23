@@ -1,0 +1,8 @@
+tunnel: 67720db3-601e-4551-a00b-a5bdf853aa4e
+credentials-file: /etc/cloudflared/credentials.json
+protocol: http2
+
+ingress:
+  - hostname: brydyan.me
+    service: https://<HEROKU-APP-NAME>.herokuapp.com
+  - service: http_status:404

@@ -1,0 +1,28 @@
+{{$DOMAIN}} {{
+    root /app/frontend/dist
+    try_files {{path}} /index.html
+
+    @nocache {{
+            path /index.html
+            path /manifest.webmanifest
+            path /sw.js
+    }}
+    header @nocache Cache-Control "no-cache, no-store, must-revalidate"
+
+    @assets {{
+            path /assets/*
+    }}
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+
+    @notfound {{
+            not path /index.html
+            file {{
+                    try_files {{path}}
+            }}
+    }}
+    error @notfound 404
+
+    reverse_proxy /api/* backend:3000
+
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}}
