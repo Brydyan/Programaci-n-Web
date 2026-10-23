@@ -82,9 +82,9 @@ export default function InstallPrompt() {
     <div
       className="fixed inset-x-4 bottom-4 z-50 mx-auto max-w-sm rounded-lg bg-slate-800 p-4 text-white shadow-xl"
       role="dialog"
-      aria-label="Instalar MultiCatálogo"
+      aria-label="Instalar Andy Alejandro"
     >
-      <h2 className="mb-1 font-semibold">Instala MultiCatálogo</h2>
+      <h2 className="mb-1 font-semibold">Instala Andy Alejandro</h2>
       <p className="mb-3 text-sm text-slate-300">
         Tenla en la pantalla de inicio y ábrela sin barra de navegador.
       </p>

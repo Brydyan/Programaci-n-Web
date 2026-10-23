@@ -23,8 +23,8 @@ export default defineConfig({
       includeAssets: ['favicon.svg'],
 
       manifest: {
-        name: 'MultiCatálogo — Tienda Cosmética y MLM',
-        short_name: 'MultiCatálogo',
+        name: 'Andy Alejandro — Tienda Cosmética y MLM',
+        short_name: 'Andy A.',
         description:
           'Tienda de cosmética con red de ventas multinivel. Consulta el catálogo y gestiona tus pedidos.',
         lang: 'es-EC',

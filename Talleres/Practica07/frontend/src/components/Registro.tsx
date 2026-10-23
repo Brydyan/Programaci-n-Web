@@ -103,7 +103,7 @@ const Registro = () => {
       <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8 border border-slate-200">
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold text-slate-900">Crear cuenta</h2>
-          <p className="text-slate-500 mt-2">Únete a MultiCatálogo en segundos</p>
+          <p className="text-slate-500 mt-2">Únete a la red de Andy Alejandro en segundos</p>
         </div>
 
         {success && (
