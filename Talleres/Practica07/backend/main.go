@@ -72,6 +72,16 @@ func main() {
 	// 6) Rutas.
 	routes.SetupRoutes(app, ctrl, jwtSecret)
 
+	// 6.5) Servir frontend (SPA static files + fallback a index.html).
+	// En Heroku: ./frontend/dist (generado en el Dockerfile)
+	// En desarrollo: ../frontend/dist (desde raíz del proyecto)
+	app.Static("/assets", "./frontend/dist/assets")
+	app.Static("/", "./frontend/dist")
+	app.Get("/*", func(c *fiber.Ctx) error {
+		// SPA routing: cualquier ruta no encontrada → index.html
+		return c.SendFile("./frontend/dist/index.html")
+	})
+
 	// 7) Listen.
 	log.Printf("[boot] APP_ENV=%s puerto=%s", appEnv, port)
 	if err := app.Listen(":" + port); err != nil {
