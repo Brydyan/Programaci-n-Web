@@ -207,14 +207,30 @@ export interface ComisionResumen {
 }
 
 // ── Liquidaciones ───────────────────────────────────────────
+export type EstadoLiquidacion = 'pendiente' | 'pagada';
+
 export interface Liquidacion {
   id: number;
   referido_id: number;
   total: number;
   periodo?: string;
-  estado: 'pendiente' | 'pagada';
+  estado: EstadoLiquidacion;
   creado_en: string;
   pagada_en?: string | null;
+}
+
+/**
+ * Envoltura de las respuestas paginadas del backend: {data, limit, page, total}.
+ *
+ * El backend pagina en unos endpoints y no en otros — `/comisiones/mias` no
+ * pagina (trae los totales por estado en la misma respuesta), mientras que
+ * `/liquidaciones/mias` sí. Por eso el tipo genérico no se aplica a todo.
+ */
+export interface Paginado<T> {
+  data: T[];
+  limit: number;
+  page: number;
+  total: number;
 }
 
 // ── Reportes ────────────────────────────────────────────────

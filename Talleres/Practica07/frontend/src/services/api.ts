@@ -4,8 +4,10 @@ import type {
   ComisionResumen,
   EstadoComision,
   Health,
+  Liquidacion,
   LoginResponse,
   NodoRed,
+  Paginado,
   RegisterRequest,
   RegisterResponse,
   Rol,
@@ -106,4 +108,18 @@ export const getRedMiaAPI = (): Promise<NodoRed[]> =>
 export const getComisionesMiasAPI = (params?: { estado?: EstadoComision }): Promise<ComisionResumen> => {
   const qs = params?.estado ? `?estado=${encodeURIComponent(params.estado)}` : '';
   return apiFetch<ComisionResumen>(`/api/comisiones/mias${qs}`, { method: 'GET' });
+};
+
+/**
+ * Cobros del usuario autenticado. A diferencia de `/comisiones/mias`, este
+ * endpoint sí pagina: devuelve {data, limit, page, total}.
+ */
+export const getLiquidacionesMiasAPI = (
+  params?: { page?: number; limit?: number },
+): Promise<Paginado<Liquidacion>> => {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const sufijo = qs.toString() ? `?${qs.toString()}` : '';
+  return apiFetch<Paginado<Liquidacion>>(`/api/liquidaciones/mias${sufijo}`, { method: 'GET' });
 };

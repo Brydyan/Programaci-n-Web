@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { MdInventory2, MdOutlineDashboard } from "react-icons/md";
 import { GrCatalog } from "react-icons/gr";
-import { FaNetworkWired, FaReceipt, FaClipboardList } from "react-icons/fa";
+import { FaNetworkWired, FaReceipt, FaClipboardList, FaPiggyBank } from "react-icons/fa";
 import { useSidebar } from "../context/sidebar";
 import { useAuth } from "../context/auth";
 
@@ -16,6 +16,7 @@ const items: Item[] = [
     { to: "/",                 label: "Dashboard",  Icon: MdOutlineDashboard, roles: ["admin"] },
     { to: "/catalogo",         label: "Catálogo",   Icon: GrCatalog,          roles: ["admin", "cliente"] },
     { to: "/mi-red",           label: "Mi Red",     Icon: FaNetworkWired,     roles: ["admin", "cliente"] },
+    { to: "/mis-ganancias",    label: "Mis Ganancias", Icon: FaPiggyBank,      roles: ["admin", "cliente"] },
     { to: "/admin/productos",  label: "Productos",  Icon: MdInventory2,       roles: ["admin"] },
     { to: "/mis-pedidos",      label: "Mis Pedidos", Icon: FaReceipt,          roles: ["admin", "cliente"] },
     { to: "/admin/pedidos",    label: "Pedidos",    Icon: FaClipboardList,    roles: ["admin"] },

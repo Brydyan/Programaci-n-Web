@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import Catalogo from './components/Catalogo';
 import MiRed from './components/MiRed';
+import MisGanancias from './components/MisGanancias';
 import Carrito from './components/Carrito';
 import Login from './components/Login';
 import Registro from './components/Registro';
@@ -61,6 +62,8 @@ function App() {
                 <Route path="mis-pedidos" element={<MisPedidos />} />
                 {/* Cada usuario tiene su propia red: no es una vista de admin. */}
                 <Route path="mi-red" element={<MiRed />} />
+                {/* El lado del dinero: ledger devengado y cobros. */}
+                <Route path="mis-ganancias" element={<MisGanancias />} />
               </Route>
             </Route>
 

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
 import { getComisionesMiasAPI, getRedMiaAPI } from '../services/api';
 import {
@@ -194,8 +195,13 @@ const ESTADO_COMISION: Record<EstadoComision, { texto: string; clase: string }> 
 };
 
 /**
- * "Mis comisiones": el ledger del usuario con los totales por estado. Es la
- * respuesta a "¿cuánto me deben y por qué pedidos?".
+ * Resumen del ledger dentro de "Mi Red".
+ *
+ * Antes esta tabla listaba cada comisión aquí. Ahora vive entera en
+ * "Mis Ganancias" (/mis-ganancias), que además trae los cobros y separa
+ * devengado de cobrado. Aquí queda solo el agregado por estado: dentro de
+ * la vista de red interesa "¿cuánto ha producido mi red?", no el
+ * detalle línea por línea.
  */
 const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
   if (!resumen) {
@@ -215,9 +221,16 @@ const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 shadow-sm">
-      <p className="text-xs font-semibold uppercase text-slate-500 mb-3">Mis comisiones</p>
-
-      <div className="flex flex-wrap gap-2 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <p className="text-xs font-semibold uppercase text-slate-500">Mis comisiones</p>
+        <Link
+          to="/mis-ganancias"
+          className="text-xs text-indigo-600 hover:text-indigo-700 font-medium min-h-[36px] inline-flex items-center"
+        >
+          Ver detalle →
+        </Link>
+      </div>
+      <div className="flex flex-wrap gap-2">
         {resumen.totales.map((t) => {
           const est = ESTADO_COMISION[t.estado];
           return (
@@ -227,38 +240,6 @@ const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
             </div>
           );
         })}
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-slate-200">
-            <tr>
-              <th className="py-2 pr-3 font-semibold text-slate-600">Pedido</th>
-              <th className="py-2 pr-3 font-semibold text-slate-600">Nivel</th>
-              <th className="py-2 pr-3 font-semibold text-slate-600">%</th>
-              <th className="py-2 pr-3 font-semibold text-slate-600">Monto</th>
-              <th className="py-2 font-semibold text-slate-600">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {resumen.data.map((c) => {
-              const est = ESTADO_COMISION[c.estado];
-              return (
-                <tr key={c.id} className="border-b border-slate-100">
-                  <td className="py-2 pr-3 text-slate-700">#{c.pedido_id ?? '—'}</td>
-                  <td className="py-2 pr-3 text-slate-500">{c.nivel}</td>
-                  <td className="py-2 pr-3 text-slate-500">{c.porcentaje}%</td>
-                  <td className="py-2 pr-3 font-semibold text-slate-800">{money(c.monto)}</td>
-                  <td className="py-2">
-                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${est.clase}`}>
-                      {est.texto}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
       </div>
     </div>
   );
