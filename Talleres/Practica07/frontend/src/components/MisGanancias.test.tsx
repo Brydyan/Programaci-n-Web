@@ -18,7 +18,7 @@ vi.mock('../context/auth', () => ({
 }));
 
 import { getComisionesMiasAPI, getLiquidacionesMiasAPI } from '../services/api';
-import type { ComisionResumen, Paginado } from '../types/api';
+import type { ComisionResumen, Pagina } from '../types/api';
 
 const mockComisiones = vi.mocked(getComisionesMiasAPI);
 const mockLiquidaciones = vi.mocked(getLiquidacionesMiasAPI);
@@ -66,7 +66,7 @@ const COMISIONES: ComisionResumen = {
   ],
 };
 
-const LIQUIDACIONES: Paginado<{
+const LIQUIDACIONES: Pagina<{
   id: number;
   referido_id: number;
   total: number;

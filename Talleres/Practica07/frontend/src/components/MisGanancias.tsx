@@ -6,7 +6,7 @@ import {
   type ComisionResumen,
   type EstadoComision,
   type Liquidacion,
-  type Paginado,
+  type Pagina,
 } from '../types/api';
 import { useAuth } from '../context/auth';
 import { formatCurrency, formatFecha } from './reportes/format';
@@ -54,7 +54,7 @@ const ESTADO_LIQUIDACION = {
 const MisGanancias = () => {
   const { userEmail } = useAuth();
   const [comisiones, setComisiones] = useState<ComisionResumen | null>(null);
-  const [liquidaciones, setLiquidaciones] = useState<Paginado<Liquidacion> | null>(null);
+  const [liquidaciones, setLiquidaciones] = useState<Pagina<Liquidacion> | null>(null);
   const [filtro, setFiltro] = useState<FiltroEstado>('todas');
   const [pagina, setPagina] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
@@ -305,7 +305,7 @@ const PanelLiquidaciones = ({
   pagina,
   setPagina,
 }: {
-  datos: Paginado<Liquidacion> | null;
+  datos: Pagina<Liquidacion> | null;
   pagina: number;
   setPagina: (p: number) => void;
 }) => {
