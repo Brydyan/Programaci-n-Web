@@ -92,14 +92,14 @@ export default function InstallPrompt() {
         <button
           type="button"
           onClick={instalar}
-          className="flex-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500"
+          className="flex-1 rounded-md bg-marca-600 px-3 py-2 text-sm font-medium hover:bg-marca-500 min-h-[44px]"
         >
           Instalar
         </button>
         <button
           type="button"
           onClick={cerrar}
-          className="rounded-md bg-slate-700 px-3 py-2 text-sm hover:bg-slate-600"
+          className="rounded-md bg-slate-700 px-3 py-2 text-sm min-h-[44px] hover:bg-slate-600"
         >
           Ahora no
         </button>

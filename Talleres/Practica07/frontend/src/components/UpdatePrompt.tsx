@@ -51,14 +51,14 @@ export default function UpdatePrompt() {
         <button
           type="button"
           onClick={() => void updateServiceWorker(true)}
-          className="flex-1 rounded-md bg-white px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-50"
+          className="flex-1 rounded-md bg-white px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-50 min-h-[44px]"
         >
           Actualizar
         </button>
         <button
           type="button"
           onClick={() => setNeedRefresh(false)}
-          className="rounded-md bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500"
+          className="rounded-md bg-emerald-600 px-3 py-2 text-sm hover:bg-emerald-500 min-h-[44px]"
         >
           Más tarde
         </button>

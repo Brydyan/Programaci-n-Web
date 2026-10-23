@@ -5,10 +5,12 @@ import { getRedMiaAPI } from '../services/redService';
 import {
   getErrorMessage,
   type ComisionResumen,
-  type EstadoComision,
   type NodoRed,
 } from '../types/api';
 import { useAuth } from '../context/auth';
+import { TonoBloque } from './Badge';
+import { ESTADO_COMISION } from './tokens';
+import { formatCurrency } from './reportes/format';
 import { RamaRed, ResumenCards } from './RedArbol';
 import { resumenRed } from './redUtils';
 
@@ -21,8 +23,6 @@ import { resumenRed } from './redUtils';
  * El nodo raíz (nivel 0) es el propio usuario y su `codigo` es el que se
  * comparte en el link de invitación /registro?ref=CODIGO.
  */
-
-const money = (n: number) => `$${n.toFixed(2)}`;
 
 const MiRed = () => {
   const { userEmail } = useAuth();
@@ -111,7 +111,7 @@ const MiRed = () => {
         {!error && arbol.length > 0 && (
           <button
             onClick={cargar}
-            className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
+            className="text-xs bg-marca-50 text-marca-600 hover:bg-marca-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
           >
             Actualizar
           </button>
@@ -149,7 +149,7 @@ const MiRed = () => {
               </code>
               <button
                 onClick={copiarLink}
-                className="min-h-[44px] px-4 py-2 bg-indigo-600 text-white rounded-md font-semibold hover:bg-indigo-700 transition text-sm"
+                className="min-h-[44px] px-4 py-2 bg-marca-600 text-white rounded-md font-semibold hover:bg-marca-700 transition text-sm"
               >
                 {copiado ? '¡Copiado!' : 'Copiar'}
               </button>
@@ -167,14 +167,6 @@ const MiRed = () => {
       )}
     </div>
   );
-};
-
-/** Etiqueta y color por estado del ledger. */
-const ESTADO_COMISION: Record<EstadoComision, { texto: string; clase: string }> = {
-  pendiente: { texto: 'Pendiente', clase: 'bg-amber-100 text-amber-800' },
-  aprobada: { texto: 'Aprobada', clase: 'bg-sky-100 text-sky-800' },
-  pagada: { texto: 'Pagada', clase: 'bg-emerald-100 text-emerald-800' },
-  revertida: { texto: 'Revertida', clase: 'bg-slate-200 text-slate-600' },
 };
 
 /**
@@ -208,7 +200,7 @@ const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
         <p className="text-xs font-semibold uppercase text-slate-500">Mis comisiones</p>
         <Link
           to="/mis-ganancias"
-          className="text-xs text-indigo-600 hover:text-indigo-700 font-medium min-h-[36px] inline-flex items-center"
+          className="text-xs text-marca-600 hover:text-marca-700 font-medium min-h-[36px] inline-flex items-center"
         >
           Ver detalle →
         </Link>
@@ -217,10 +209,10 @@ const PanelComisiones = ({ resumen }: { resumen: ComisionResumen | null }) => {
         {resumen.totales.map((t) => {
           const est = ESTADO_COMISION[t.estado];
           return (
-            <div key={t.estado} className={`rounded-md px-3 py-2 ${est.clase}`}>
+            <TonoBloque key={t.estado} tono={est.tono}>
               <p className="text-xs font-medium">{est.texto}</p>
-              <p className="text-sm font-bold">{money(t.total)}</p>
-            </div>
+              <p className="text-sm font-bold">{formatCurrency(t.total)}</p>
+            </TonoBloque>
           );
         })}
       </div>

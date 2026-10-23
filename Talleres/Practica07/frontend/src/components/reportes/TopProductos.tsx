@@ -47,7 +47,7 @@ export default function TopProductos({ data, cargando, error }: Props) {
               </div>
               <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-100">
                 <div
-                  className="h-full rounded-full bg-indigo-500"
+                  className="h-full rounded-full bg-marca-500"
                   style={{ width: `${anchoBarra(f.ingresos, maxIngresos)}%` }}
                 />
               </div>

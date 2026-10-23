@@ -100,7 +100,7 @@ const Registro = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100 px-4 py-8">
-      <div className="max-w-md w-full bg-white rounded-xl shadow-md p-8 border border-slate-200">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8 border border-slate-200">
         <div className="text-center mb-8">
           <h2 className="text-3xl font-bold text-slate-900">Crear cuenta</h2>
           <p className="text-slate-500 mt-2">Únete a MultiCatálogo en segundos</p>
@@ -139,7 +139,7 @@ const Registro = () => {
               autoComplete="name"
               value={nombre}
               onChange={(e) => setNombre(e.target.value)}
-              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
               placeholder="Tu nombre"
               aria-invalid={Boolean(fieldErrors.nombre)}
               required
@@ -162,7 +162,7 @@ const Registro = () => {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
               placeholder="tu@correo.com"
               aria-invalid={Boolean(fieldErrors.email)}
               required
@@ -186,7 +186,7 @@ const Registro = () => {
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full min-h-[44px] px-4 py-3 pr-24 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+                className="w-full min-h-[44px] px-4 py-3 pr-24 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
                 placeholder="Mínimo 8 caracteres"
                 aria-invalid={Boolean(fieldErrors.password)}
                 required
@@ -218,7 +218,7 @@ const Registro = () => {
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
               placeholder="Repite tu contraseña"
               aria-invalid={Boolean(fieldErrors.confirmPassword)}
               required
@@ -242,7 +242,7 @@ const Registro = () => {
               maxLength={8}
               value={ref}
               onChange={(e) => setRef(e.target.value.toUpperCase())}
-              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition uppercase tracking-wider"
+              className="w-full min-h-[44px] px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition uppercase tracking-wider"
               placeholder="ABCD12"
               aria-invalid={Boolean(fieldErrors.ref)}
             />
@@ -254,7 +254,7 @@ const Registro = () => {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full min-h-[44px] bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full min-h-[44px] bg-marca-600 text-white font-bold py-3 rounded-lg hover:bg-marca-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? 'Creando cuenta...' : 'Crear cuenta'}
           </button>

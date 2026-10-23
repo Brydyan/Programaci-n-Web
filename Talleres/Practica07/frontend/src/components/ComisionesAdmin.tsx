@@ -7,6 +7,8 @@ import {
   type EstadoComision,
 } from '../types/api';
 import { formatCurrency, formatFecha } from './reportes/format';
+import { BadgeEstado, TonoBloque } from './Badge';
+import { ESTADO_COMISION } from './tokens';
 
 /**
  * "Auditoría de comisiones" — admin only.
@@ -23,13 +25,6 @@ import { formatCurrency, formatFecha } from './reportes/format';
  */
 
 const ESTADOS: EstadoComision[] = ['pendiente', 'aprobada', 'pagada', 'revertida'];
-
-const ESTILO: Record<EstadoComision, { texto: string; clase: string }> = {
-  pendiente: { texto: 'Pendiente', clase: 'bg-amber-100 text-amber-800' },
-  aprobada: { texto: 'Aprobada', clase: 'bg-sky-100 text-sky-800' },
-  pagada: { texto: 'Pagada', clase: 'bg-emerald-100 text-emerald-800' },
-  revertida: { texto: 'Revertida', clase: 'bg-slate-200 text-slate-600' },
-};
 
 const ComisionesAdmin = () => {
   const [filtroEstado, setFiltroEstado] = useState<EstadoComision | ''>('');
@@ -116,7 +111,7 @@ const ComisionesAdmin = () => {
         </div>
         <button
           onClick={cargar}
-          className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
+          className="text-xs bg-marca-50 text-marca-600 hover:bg-marca-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
         >
           Actualizar
         </button>
@@ -140,13 +135,13 @@ const ComisionesAdmin = () => {
           </p>
           <div className="flex flex-wrap gap-2">
             {datos.totales.map((t) => {
-              const est = ESTILO[t.estado];
+              const est = ESTADO_COMISION[t.estado];
               return (
-                <div key={t.estado} className={`rounded-md px-3 py-2 ${est.clase}`}>
+                <TonoBloque key={t.estado} tono={est.tono}>
                   <p className="text-xs font-medium">{est.texto}</p>
                   <p className="text-sm font-bold">{formatCurrency(t.total)}</p>
                   <p className="text-xs opacity-75">{t.cantidad} comisiones</p>
-                </div>
+                </TonoBloque>
               );
             })}
           </div>
@@ -161,7 +156,7 @@ const ComisionesAdmin = () => {
               aria-pressed={filtroEstado === ''}
               className={`text-xs px-3 py-1.5 rounded-md font-medium border transition min-h-[36px] ${
                 filtroEstado === ''
-                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  ? 'bg-marca-600 text-white border-marca-600'
                   : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
               }`}
             >
@@ -174,11 +169,11 @@ const ComisionesAdmin = () => {
                 aria-pressed={filtroEstado === e}
                 className={`text-xs px-3 py-1.5 rounded-md font-medium border transition min-h-[36px] ${
                   filtroEstado === e
-                    ? 'bg-indigo-600 text-white border-indigo-600'
+                    ? 'bg-marca-600 text-white border-marca-600'
                     : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
                 }`}
               >
-                {ESTILO[e].texto}
+                {ESTADO_COMISION[e].texto}
               </button>
             ))}
           </div>
@@ -196,7 +191,7 @@ const ComisionesAdmin = () => {
               value={referidoId}
               onChange={(e) => setReferido(e.target.value)}
               placeholder="Todos"
-              className="w-32 px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+              className="w-32 px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-marca-500 min-h-[44px]"
             />
           </div>
         </div>
@@ -220,7 +215,7 @@ const ComisionesAdmin = () => {
               </thead>
               <tbody>
                 {filas.map((c: Comision) => {
-                  const est = ESTILO[c.estado];
+                  const est = ESTADO_COMISION[c.estado];
                   return (
                     <tr key={c.id} className="border-b border-slate-100">
                       <td className="py-2 pr-3 text-slate-400">{c.id}</td>
@@ -233,9 +228,7 @@ const ComisionesAdmin = () => {
                       </td>
                       <td className="py-2 pr-3 text-slate-500">{formatFecha(c.creado_en)}</td>
                       <td className="py-2">
-                        <span className={`rounded px-2 py-0.5 text-xs font-medium ${est.clase}`}>
-                          {est.texto}
-                        </span>
+                        <BadgeEstado definicion={est} />
                       </td>
                     </tr>
                   );

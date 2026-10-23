@@ -46,7 +46,7 @@ export default function ResumenCards({ data, cargando, error }: Props) {
       etiqueta: 'Ticket promedio',
       valor: formatCurrency(data.ticket_promedio),
       detalle: 'ventas ÷ pedidos',
-      acento: 'text-indigo-600',
+      acento: 'text-marca-600',
     },
     {
       etiqueta: 'Comisiones devengadas',

@@ -91,7 +91,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
     <form
       onSubmit={handleSubmit}
       noValidate
-      className="bg-white rounded-xl shadow-md border border-slate-200 w-full max-w-md p-6 space-y-4"
+      className="bg-white rounded-lg shadow-md border border-slate-200 w-full max-w-md p-6 space-y-4"
     >
       <h3 className="text-lg font-bold text-slate-900">
         {isEdit ? 'Editar producto' : 'Nuevo producto'}
@@ -112,7 +112,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
           type="text"
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
-          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
           aria-invalid={Boolean(fieldErrors.nombre)}
           required
         />
@@ -128,7 +128,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
           type="text"
           value={categoria}
           onChange={(e) => setCategoria(e.target.value)}
-          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
           aria-invalid={Boolean(fieldErrors.categoria)}
           required
         />
@@ -150,7 +150,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
             min="0.01"
             value={precio}
             onChange={(e) => setPrecio(e.target.value)}
-            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
             aria-invalid={Boolean(fieldErrors.precio)}
             required
           />
@@ -168,7 +168,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
             min="0"
             value={stock}
             onChange={(e) => setStock(e.target.value)}
-            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
             aria-invalid={Boolean(fieldErrors.stock)}
             required
           />
@@ -185,7 +185,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
           type="url"
           value={img}
           onChange={(e) => setImg(e.target.value)}
-          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
           placeholder="https://..."
           aria-invalid={Boolean(fieldErrors.img)}
         />
@@ -198,7 +198,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
             type="checkbox"
             checked={activo}
             onChange={(e) => setActivo(e.target.checked)}
-            className="w-4 h-4 accent-indigo-600"
+            className="w-4 h-4 accent-marca-600"
           />
           Producto activo
         </label>
@@ -216,7 +216,7 @@ const ProductoForm = ({ initial, onCancel, onSaved }: Props) => {
         <button
           type="submit"
           disabled={isLoading}
-          className="min-h-[44px] px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          className="min-h-[44px] px-4 py-2 rounded-lg bg-marca-600 text-white font-semibold hover:bg-marca-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? 'Guardando...' : isEdit ? 'Guardar cambios' : 'Crear producto'}
         </button>

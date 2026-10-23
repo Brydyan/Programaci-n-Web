@@ -75,7 +75,7 @@ const RedGlobal = () => {
         </div>
         <button
           onClick={cargar}
-          className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
+          className="text-xs bg-marca-50 text-marca-600 hover:bg-marca-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
         >
           Actualizar
         </button>
@@ -111,7 +111,7 @@ const RedGlobal = () => {
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               placeholder="Buscar por nombre o código..."
-              className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[44px]"
+              className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-marca-500 min-h-[44px]"
             />
             {texto.trim() !== '' && (
               <p className="mt-2 text-xs text-slate-500">

@@ -8,6 +8,7 @@ import {
 } from '../services/adminProductosService';
 import type { Pagina, Producto } from '../types/api';
 import { ApiError } from '../types/api';
+import { Badge } from './Badge';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import ProductoForm from './ProductoForm';
 
@@ -126,7 +127,7 @@ const AdminProductos = () => {
               setEditing(null);
               setCreating(true);
             }}
-            className="min-h-[44px] px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition"
+            className="min-h-[44px] px-4 py-2 rounded-lg bg-marca-600 text-white font-semibold hover:bg-marca-700 transition"
           >
             Crear producto
           </button>
@@ -138,7 +139,7 @@ const AdminProductos = () => {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Buscar por nombre..."
-            className="flex-1 min-h-[44px] px-4 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+            className="flex-1 min-h-[44px] px-4 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
             aria-label="Buscar productos"
           />
           <select
@@ -147,7 +148,7 @@ const AdminProductos = () => {
               setActivoFilter(e.target.value as ActivoFilter);
               setPage(1);
             }}
-            className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+            className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
             aria-label="Filtrar por estado"
           >
             <option value="all">Todos</option>
@@ -199,7 +200,7 @@ const AdminProductos = () => {
         {/* Loading */}
         {loading && (
           <div className="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
-            <div className="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <div className="inline-block w-6 h-6 border-2 border-marca-600 border-t-transparent rounded-full animate-spin" />
             <p className="mt-2 text-sm">Cargando productos...</p>
           </div>
         )}
@@ -251,15 +252,9 @@ const AdminProductos = () => {
                       </td>
                       <td className="px-4 py-3 text-right text-slate-800">{p.stock}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                            p.activo
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-slate-200 text-slate-600'
-                          }`}
-                        >
+                        <Badge tono={p.activo ? 'exito' : 'neutro'}>
                           {p.activo ? 'Activo' : 'Inactivo'}
-                        </span>
+                        </Badge>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
@@ -269,7 +264,7 @@ const AdminProductos = () => {
                               setCreating(false);
                               setEditing(p);
                             }}
-                            className="p-2 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900"
+                            className="p-2 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900 min-h-[44px]"
                             title="Editar"
                             aria-label={`Editar ${p.nombre}`}
                           >
@@ -279,7 +274,7 @@ const AdminProductos = () => {
                             type="button"
                             disabled={busyId === p.id}
                             onClick={() => void handleToggleActivo(p)}
-                            className="p-2 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900 disabled:opacity-50"
+                            className="p-2 rounded hover:bg-slate-100 text-slate-600 hover:text-slate-900 disabled:opacity-50 min-h-[44px]"
                             title={p.activo ? 'Desactivar' : 'Activar'}
                             aria-label={
                               p.activo ? `Desactivar ${p.nombre}` : `Activar ${p.nombre}`
@@ -295,7 +290,7 @@ const AdminProductos = () => {
                             type="button"
                             disabled={busyId === p.id}
                             onClick={() => void handleDelete(p)}
-                            className="p-2 rounded hover:bg-red-50 text-red-600 disabled:opacity-50"
+                            className="p-2 rounded hover:bg-red-50 text-red-600 disabled:opacity-50 min-h-[44px]"
                             title="Eliminar"
                             aria-label={`Eliminar ${p.nombre}`}
                           >
@@ -333,15 +328,9 @@ const AdminProductos = () => {
                         <p className="font-medium text-slate-800 truncate">{p.nombre}</p>
                         <p className="text-xs text-slate-500">{p.categoria}</p>
                       </div>
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${
-                          p.activo
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
+                      <Badge tono={p.activo ? 'exito' : 'neutro'} className="flex-shrink-0">
                         {p.activo ? 'Activo' : 'Inactivo'}
-                      </span>
+                      </Badge>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-sm text-slate-700">
                       <span>${p.precio.toFixed(2)}</span>
@@ -354,7 +343,7 @@ const AdminProductos = () => {
                           setCreating(false);
                           setEditing(p);
                         }}
-                        className="p-2 rounded hover:bg-slate-100 text-slate-600"
+                        className="p-2 rounded hover:bg-slate-100 text-slate-600 min-h-[44px]"
                         title="Editar"
                         aria-label={`Editar ${p.nombre}`}
                       >
@@ -364,7 +353,7 @@ const AdminProductos = () => {
                         type="button"
                         disabled={busyId === p.id}
                         onClick={() => void handleToggleActivo(p)}
-                        className="p-2 rounded hover:bg-slate-100 text-slate-600 disabled:opacity-50"
+                        className="p-2 rounded hover:bg-slate-100 text-slate-600 disabled:opacity-50 min-h-[44px]"
                         title={p.activo ? 'Desactivar' : 'Activar'}
                         aria-label={p.activo ? `Desactivar ${p.nombre}` : `Activar ${p.nombre}`}
                       >
@@ -378,7 +367,7 @@ const AdminProductos = () => {
                         type="button"
                         disabled={busyId === p.id}
                         onClick={() => void handleDelete(p)}
-                        className="p-2 rounded hover:bg-red-50 text-red-600 disabled:opacity-50"
+                        className="p-2 rounded hover:bg-red-50 text-red-600 disabled:opacity-50 min-h-[44px]"
                         title="Eliminar"
                         aria-label={`Eliminar ${p.nombre}`}
                       >
@@ -446,7 +435,7 @@ const AdminProductos = () => {
                 setLimit(Number(e.target.value));
                 setPage(1);
               }}
-              className="min-h-[36px] px-2 py-1 rounded border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none"
+              className="min-h-[36px] px-2 py-1 rounded border border-slate-300 bg-white focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none"
               aria-label="Límite por página"
             >
               <option value={10}>10</option>

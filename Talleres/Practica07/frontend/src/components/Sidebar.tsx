@@ -25,6 +25,13 @@ const items: Item[] = [
     { to: "/admin/red", label: "Red Global", Icon: FaSitemap, roles: ["admin"] },
 ];
 
+// El aside iba en `bg-slate-500`, un gris medio que no aparecía en ninguna
+// otra superficie de la aplicación y dejaba el menú como un bloque
+// descolgado. Ahora la superficie es `bg-slate-800` —neutra y oscura— y el
+// acento se reserva para la interacción: el item se ilumina con el tono de
+// marca al pasar por encima.
+const SIDEBAR_TENUE = "bg-marca-700 hover:bg-marca-600";
+
 const Sidebar = () => {
     const { isCollapsed } = useSidebar();
     const { rol } = useAuth();
@@ -38,7 +45,7 @@ const Sidebar = () => {
 
     return (
         <aside
-            className={`bg-slate-500 text-white flex flex-col transition-all duration-300 h-screen ${
+            className={`bg-slate-800 text-white flex flex-col transition-all duration-300 h-screen ${
                 isCollapsed ? "w-20" : "w-64"
             }`}
         >
@@ -59,7 +66,7 @@ const Sidebar = () => {
                     <Link
                         key={to}
                         to={to}
-                        className="flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded hover:bg-slate-800 transition text-sm md:text-base"
+                        className={`flex items-center gap-2 md:gap-3 p-2 md:p-3 rounded transition text-sm md:text-base ${SIDEBAR_TENUE}`}
                         title={isCollapsed ? label : ""}
                     >
                         <Icon className="text-lg md:text-xl flex-shrink-0" />

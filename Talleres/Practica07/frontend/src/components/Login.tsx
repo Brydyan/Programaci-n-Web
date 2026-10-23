@@ -31,7 +31,7 @@ const Login = () => {
     return (
         <div className="min-h-screen flex items-center justify-center bg-slate-100
 px-4">
-            <div className="max-w-md w-full bg-white rounded-xl shadow-md p-8
+            <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8
 border border-slate-200">
                 <div className="text-center mb-8">
                     <h2 className="text-3xl font-bold text-slate-900">MultiCatálogo</h2>
@@ -52,7 +52,7 @@ text-center border border-red-200">
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             className="w-full px-4 py-3 rounded-lg border border-slate-300
-focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none
+focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none
 transition"
                             placeholder="admin@upse.edu.ec"
                             required
@@ -65,7 +65,7 @@ transition"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             className="w-full px-4 py-3 rounded-lg border border-slate-300
-focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none
+focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none
 transition"
                             placeholder="••••••"
                             required
@@ -74,8 +74,8 @@ transition"
                     <button
                         type="submit"
                         disabled={isLoading}
-                        className="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg
-hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full bg-marca-600 text-white font-bold py-3 min-h-[44px] rounded-lg
+hover:bg-marca-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {isLoading ? 'Iniciando...' : 'Iniciar Sesión'}
                     </button>

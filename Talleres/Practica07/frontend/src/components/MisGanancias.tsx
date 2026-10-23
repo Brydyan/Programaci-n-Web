@@ -10,6 +10,8 @@ import {
 } from '../types/api';
 import { useAuth } from '../context/auth';
 import { formatCurrency, formatFecha } from './reportes/format';
+import { BadgeEstado, TonoBloque } from './Badge';
+import { ESTADO_COMISION, ESTADO_LIQUIDACION } from './tokens';
 
 /**
  * "Mis Ganancias" — el lado del dinero del MLM.
@@ -38,18 +40,6 @@ const FILTROS: { valor: FiltroEstado; texto: string }[] = [
   { valor: 'pagada', texto: 'Pagadas' },
   { valor: 'revertida', texto: 'Revertidas' },
 ];
-
-const ESTADO_COMISION: Record<EstadoComision, { texto: string; clase: string }> = {
-  pendiente: { texto: 'Pendiente', clase: 'bg-amber-100 text-amber-800' },
-  aprobada: { texto: 'Aprobada', clase: 'bg-sky-100 text-sky-800' },
-  pagada: { texto: 'Pagada', clase: 'bg-emerald-100 text-emerald-800' },
-  revertida: { texto: 'Revertida', clase: 'bg-slate-200 text-slate-600' },
-};
-
-const ESTADO_LIQUIDACION = {
-  pendiente: { texto: 'Pendiente', clase: 'bg-amber-100 text-amber-800' },
-  pagada: { texto: 'Pagada', clase: 'bg-emerald-100 text-emerald-800' },
-} as const;
 
 const MisGanancias = () => {
   const { userEmail } = useAuth();
@@ -142,7 +132,7 @@ const MisGanancias = () => {
         <button
           onClick={cargar}
           disabled={isRefrescando}
-          className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
+          className="text-xs bg-marca-50 text-marca-600 hover:bg-marca-100 disabled:opacity-50 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
         >
           {isRefrescando ? 'Actualizando...' : 'Actualizar'}
         </button>
@@ -185,11 +175,11 @@ const MisGanancias = () => {
             {comisiones.totales.map((t) => {
               const est = ESTADO_COMISION[t.estado];
               return (
-                <div key={t.estado} className={`rounded-md px-3 py-2 ${est.clase}`}>
+                <TonoBloque key={t.estado} tono={est.tono}>
                   <p className="text-xs font-medium">{est.texto}</p>
                   <p className="text-sm font-bold">{formatCurrency(t.total)}</p>
                   <p className="text-xs opacity-75">{t.cantidad} comisiones</p>
-                </div>
+                </TonoBloque>
               );
             })}
           </div>
@@ -218,7 +208,7 @@ const TarjetaValor = ({
     className="bg-white p-4 rounded-lg border border-slate-200"
   >
     <p className="text-xs uppercase font-semibold text-slate-500">{etiqueta}</p>
-    <p className="text-2xl font-bold text-indigo-600">{valor}</p>
+    <p className="text-2xl font-bold text-marca-600">{valor}</p>
     <p className="text-xs text-slate-400 mt-1">{ayuda}</p>
   </div>
 );
@@ -245,7 +235,7 @@ const TablaComisiones = ({
           aria-pressed={filtro === f.valor}
           className={`text-xs px-3 py-1.5 rounded-md font-medium border transition min-h-[36px] ${
             filtro === f.valor
-              ? 'bg-indigo-600 text-white border-indigo-600'
+              ? 'bg-marca-600 text-white border-marca-600'
               : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
           }`}
         >
@@ -284,11 +274,7 @@ const TablaComisiones = ({
                     {formatCurrency(c.monto)}
                   </td>
                   <td className="py-2">
-                    <span
-                      className={`rounded px-2 py-0.5 text-xs font-medium ${est.clase}`}
-                    >
-                      {est.texto}
-                    </span>
+                    <BadgeEstado definicion={est} />
                   </td>
                 </tr>
               );
@@ -350,11 +336,7 @@ const PanelLiquidaciones = ({
                         {formatCurrency(l.total)}
                       </td>
                       <td className="py-2">
-                        <span
-                          className={`rounded px-2 py-0.5 text-xs font-medium ${est.clase}`}
-                        >
-                          {est.texto}
-                        </span>
+                        <BadgeEstado definicion={est} />
                       </td>
                     </tr>
                   );

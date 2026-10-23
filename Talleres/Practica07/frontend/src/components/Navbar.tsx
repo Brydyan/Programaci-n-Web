@@ -4,6 +4,7 @@ import { useCart } from "../context/cart";
 import { useAuth } from "../context/auth";
 import { useSidebar } from "../context/sidebar";
 import { GiHamburgerMenu } from "react-icons/gi";
+import { Badge } from "./Badge";
 
 const Navbar = () => {
     const { totalItems } = useCart();
@@ -22,7 +23,7 @@ const Navbar = () => {
             <div className="flex items-center gap-2 md:gap-4 min-w-0">
                 <button
                     onClick={toggleCollapsed}
-                    className="p-2 hover:bg-slate-100 rounded-lg transition flex-shrink-0"
+                    className="p-2 hover:bg-slate-100 rounded-lg transition flex-shrink-0 min-h-[44px]"
                     title="Toggle Sidebar"
                     aria-label="Abrir/cerrar menú lateral"
                 >
@@ -42,7 +43,7 @@ const Navbar = () => {
                 >
                     <span className="text-xl">🛒</span>
                     {totalItems > 0 && (
-                        <span className="absolute top-0 right-0 bg-indigo-600 text-white
+                        <span className="absolute top-0 right-0 bg-marca-600 text-white
 text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full
 transform translate-x-1 -translate-y-1">
                             {totalItems}
@@ -52,15 +53,12 @@ transform translate-x-1 -translate-y-1">
                 <div className="flex items-center gap-2 md:gap-4">
                     <span className="text-xs md:text-sm text-slate-500 hidden sm:inline truncate">{userEmail}</span>
                     {rol && (
-                        <span
-                            className={`hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                rol === "admin"
-                                    ? "bg-indigo-100 text-indigo-700"
-                                    : "bg-emerald-100 text-emerald-700"
-                            }`}
+                        <Badge
+                            tono={rol === 'admin' ? 'info' : 'exito'}
+                            className="hidden sm:inline-flex"
                         >
                             {rol === "admin" ? "Admin" : "Cliente"}
-                        </span>
+                        </Badge>
                     )}
                     {/* Menú usuario: click-toggle (funciona en mobile) + hover en desktop */}
                     <div className="relative">
@@ -68,8 +66,8 @@ transform translate-x-1 -translate-y-1">
                             type="button"
                             onClick={() => setMenuOpen((v) => !v)}
                             onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
-                            className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden
-border border-slate-300 flex items-center justify-center hover:ring-2 hover:ring-indigo-300 transition"
+                            className="w-11 h-11 min-h-[44px] rounded-full bg-slate-200 overflow-hidden
+border border-slate-300 flex items-center justify-center hover:ring-2 hover:ring-marca-300 transition"
                             aria-label="Abrir menú de usuario"
                             aria-haspopup="menu"
                             aria-expanded={menuOpen}
@@ -93,7 +91,7 @@ border-slate-200 rounded-lg shadow-lg z-50 overflow-hidden"
                                     type="button"
                                     onClick={handleLogout}
                                     role="menuitem"
-                                    className="w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-red-50 transition-colors flex items-center gap-2"
+                                    className="w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-red-50 transition-colors flex items-center gap-2 min-h-[44px]"
                                 >
                                     <span aria-hidden>↪</span> Cerrar Sesión
                                 </button>

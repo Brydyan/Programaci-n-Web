@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { getDeuda, liquidar, listLiquidaciones } from '../services/liquidacionesService';
 import { getErrorMessage, type DeudaDistribuidor, type Liquidacion, type Pagina } from '../types/api';
 import { formatCurrency, formatFecha } from './reportes/format';
+import { BadgeEstado } from './Badge';
+import { ESTADO_LIQUIDACION } from './tokens';
 
 /**
  * "Liquidaciones" — el lado del cobro.
@@ -92,7 +94,7 @@ const Liquidaciones = () => {
         </div>
         <button
           onClick={cargar}
-          className="text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
+          className="text-xs bg-marca-50 text-marca-600 hover:bg-marca-100 px-3 py-2 rounded-md font-medium transition self-start min-h-[44px]"
         >
           Actualizar
         </button>
@@ -116,7 +118,7 @@ const Liquidaciones = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <div className="bg-white p-4 rounded-lg border border-slate-200">
           <p className="text-xs uppercase font-semibold text-slate-500">Por pagar</p>
-          <p className="text-2xl font-bold text-indigo-600">{formatCurrency(totalAPagar)}</p>
+          <p className="text-2xl font-bold text-marca-600">{formatCurrency(totalAPagar)}</p>
           <p className="text-xs text-slate-400 mt-1">
             {deudas.length} {deudas.length === 1 ? 'distribuidor' : 'distribuidores'}
           </p>
@@ -190,7 +192,7 @@ const PanelDeuda = ({
                   <button
                     onClick={() => onPagar(d)}
                     aria-label={`Liquidar a ${d.nombre}`}
-                    className="px-3 py-1.5 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition min-h-[36px]"
+                    className="px-3 py-1.5 rounded-md bg-marca-600 text-white text-xs font-semibold hover:bg-marca-700 transition min-h-[36px]"
                   >
                     Liquidar
                   </button>
@@ -264,7 +266,7 @@ const DialogoConfirmacion = ({
           <button
             onClick={onConfirmar}
             disabled={pagando}
-            className="px-4 py-2 rounded-md bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 transition min-h-[44px]"
+            className="px-4 py-2 rounded-md bg-marca-600 text-white font-semibold hover:bg-marca-700 disabled:opacity-50 transition min-h-[44px]"
           >
             {pagando ? 'Pagando...' : `Pagar ${formatCurrency(deuda.total)}`}
           </button>
@@ -323,15 +325,7 @@ const PanelHistorial = ({
                       {formatCurrency(l.total)}
                     </td>
                     <td className="py-2">
-                      <span
-                        className={`rounded px-2 py-0.5 text-xs font-medium ${
-                          l.estado === 'pagada'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-amber-100 text-amber-800'
-                        }`}
-                      >
-                        {l.estado === 'pagada' ? 'Pagada' : 'Pendiente'}
-                      </span>
+                      <BadgeEstado definicion={ESTADO_LIQUIDACION[l.estado]} />
                     </td>
                   </tr>
                 ))}

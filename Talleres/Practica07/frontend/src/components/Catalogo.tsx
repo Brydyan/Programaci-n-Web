@@ -59,21 +59,21 @@ const Catalogo = () => {
                             />
                         </Link>
                         <div className="p-4 flex flex-col flex-1">
-                            <Link to={`/producto/${prod.id}`} className="hover:text-indigo-600 transition">
+                            <Link to={`/producto/${prod.id}`} className="hover:text-marca-600 transition">
                                 <h3 className="font-semibold text-slate-700">{prod.nombre}</h3>
                             </Link>
-                            <p className="text-indigo-600 font-bold mt-2 mb-4">${prod.precio.toFixed(2)}</p>
+                            <p className="text-marca-600 font-bold mt-2 mb-4">${prod.precio.toFixed(2)}</p>
 
                             <div className="mt-auto flex flex-col gap-2">
                                 <button
                                     onClick={() => addToCart(prod)}
-                                    className="w-full bg-slate-900 text-white py-2 rounded text-sm hover:bg-indigo-600 transition font-medium"
-                                >
+                                    className="w-full bg-slate-900 text-white py-2 rounded text-sm hover:bg-marca-600 transition font-medium min-h-[44px]"
+>
                                     Añadir al Carrito
                                 </button>
                                 <Link
                                     to={`/producto/${prod.id}`}
-                                    className="w-full text-center border border-slate-200 text-slate-600 py-1.5 rounded text-xs hover:bg-slate-50 hover:text-indigo-600 transition font-medium"
+                                    className="w-full text-center border border-slate-200 text-slate-600 py-1.5 rounded text-xs hover:bg-slate-50 hover:text-marca-600 transition font-medium"
                                 >
                                     Ver Detalle
                                 </Link>

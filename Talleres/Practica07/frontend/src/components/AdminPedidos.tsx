@@ -13,24 +13,11 @@ import {
   type Pedido,
   type PedidoResumen,
 } from '../types/api';
+import { BadgeEstado } from './Badge';
+import { ESTADO_PEDIDO } from './tokens';
+import { formatCurrency, formatFecha } from './reportes/format';
 
 type Estado = Pedido['estado'];
-
-const ESTADO_PILL: Record<Estado, string> = {
-  pendiente: 'bg-slate-200 text-slate-700',
-  preparando: 'bg-amber-100 text-amber-700',
-  enviado: 'bg-blue-100 text-blue-700',
-  entregado: 'bg-emerald-100 text-emerald-700',
-  cancelado: 'bg-rose-100 text-rose-700',
-};
-
-const ESTADO_LABEL: Record<Estado, string> = {
-  pendiente: 'Pendiente',
-  preparando: 'Preparando',
-  enviado: 'Enviado',
-  entregado: 'Entregado',
-  cancelado: 'Cancelado',
-};
 
 const ESTADOS_FILTRO: Array<{ value: '' | Estado; label: string }> = [
   { value: '', label: 'Todos' },
@@ -41,12 +28,6 @@ const ESTADOS_FILTRO: Array<{ value: '' | Estado; label: string }> = [
   { value: 'cancelado', label: 'Cancelado' },
 ];
 
-const formatCurrency = (n: number): string => `$${n.toFixed(2)}`;
-const formatFecha = (iso: string): string => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('es-EC', { year: 'numeric', month: 'short', day: '2-digit' });
-};
 
 const isEstado = (s: string): s is Estado =>
   (ESTADOS_PEDIDO as readonly string[]).includes(s);
@@ -160,7 +141,7 @@ const AdminPedidos = () => {
               setEstadoFiltro(isEstado(v) ? v : '');
               setPage(1);
             }}
-            className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+            className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
             aria-label="Filtrar por estado"
           >
             {ESTADOS_FILTRO.map((e) => (
@@ -175,7 +156,7 @@ const AdminPedidos = () => {
               setLimit(Number(e.target.value));
               setPage(1);
             }}
-            className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none transition"
+            className="min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none transition"
             aria-label="Límite por página"
           >
             <option value={10}>10</option>
@@ -202,7 +183,7 @@ const AdminPedidos = () => {
       {/* Loading */}
       {loading && (
         <div className="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
-          <div className="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <div className="inline-block w-6 h-6 border-2 border-marca-600 border-t-transparent rounded-full animate-spin" />
           <p className="mt-2 text-sm">Cargando pedidos...</p>
         </div>
       )}
@@ -245,13 +226,7 @@ const AdminPedidos = () => {
                         {formatCurrency(p.total)}
                       </td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                            ESTADO_PILL[p.estado]
-                          }`}
-                        >
-                          {ESTADO_LABEL[p.estado]}
-                        </span>
+                        <BadgeEstado definicion={ESTADO_PEDIDO[p.estado]} />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end">
@@ -270,13 +245,13 @@ const AdminPedidos = () => {
                                 }
                                 e.currentTarget.value = '';
                               }}
-                              className="min-h-[36px] px-2 py-1 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none disabled:opacity-50"
+                              className="min-h-[36px] px-2 py-1 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none disabled:opacity-50"
                               aria-label={`Cambiar estado del pedido ${p.id}`}
                             >
                               <option value="">Cambiar a…</option>
                               {transiciones.map((t) => (
                                 <option key={t} value={t}>
-                                  {ESTADO_LABEL[t]}
+                                  {ESTADO_PEDIDO[t].texto}
                                 </option>
                               ))}
                             </select>
@@ -307,13 +282,7 @@ const AdminPedidos = () => {
                         {formatCurrency(p.total)}
                       </p>
                     </div>
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        ESTADO_PILL[p.estado]
-                      }`}
-                    >
-                      {ESTADO_LABEL[p.estado]}
-                    </span>
+                    <BadgeEstado definicion={ESTADO_PEDIDO[p.estado]} />
                   </div>
                   <div className="mt-3">
                     {transiciones.length === 0 ? (
@@ -331,13 +300,13 @@ const AdminPedidos = () => {
                           }
                           e.currentTarget.value = '';
                         }}
-                        className="w-full min-h-[44px] px-3 py-2 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none disabled:opacity-50"
+                        className="w-full min-h-[44px] px-3 py-2 rounded border border-slate-300 bg-white text-sm focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none disabled:opacity-50"
                         aria-label={`Cambiar estado del pedido ${p.id}`}
                       >
                         <option value="">Cambiar a…</option>
                         {transiciones.map((t) => (
                           <option key={t} value={t}>
-                            {ESTADO_LABEL[t]}
+                            {ESTADO_PEDIDO[t].texto}
                           </option>
                         ))}
                       </select>

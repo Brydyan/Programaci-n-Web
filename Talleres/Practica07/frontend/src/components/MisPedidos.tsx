@@ -6,24 +6,12 @@ import {
   type MisPedidosQuery,
 } from '../services/pedidosService';
 import type { PedidoDetalle, PedidoResumen } from '../types/api';
-import { ApiError, type Pedido } from '../types/api';
+import { ApiError } from '../types/api';
+import { BadgeEstado } from './Badge';
+import { ESTADO_PEDIDO } from './tokens';
+import { formatCurrency, formatFecha } from './reportes/format';
 
-type Estado = Pedido['estado'];
 
-const ESTADO_PILL: Record<Estado, string> = {
-  pendiente: 'bg-slate-200 text-slate-700',
-  preparando: 'bg-amber-100 text-amber-700',
-  enviado: 'bg-blue-100 text-blue-700',
-  entregado: 'bg-emerald-100 text-emerald-700',
-  cancelado: 'bg-rose-100 text-rose-700',
-};
-
-const formatCurrency = (n: number): string => `$${n.toFixed(2)}`;
-const formatFecha = (iso: string): string => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('es-EC', { year: 'numeric', month: 'short', day: '2-digit' });
-};
 
 const MisPedidos = () => {
   const [pedidos, setPedidos] = useState<PedidoResumen[]>([]);
@@ -144,7 +132,7 @@ const MisPedidos = () => {
               setLimit(Number(e.target.value));
               setPage(1);
             }}
-            className="min-h-[36px] px-2 py-1 rounded border border-slate-300 bg-white focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600 outline-none"
+            className="min-h-[36px] px-2 py-1 rounded border border-slate-300 bg-white focus:ring-2 focus:ring-marca-600 focus:border-marca-600 outline-none"
             aria-label="Límite por página"
           >
             <option value={10}>10</option>
@@ -171,7 +159,7 @@ const MisPedidos = () => {
       {/* Loading */}
       {loading && (
         <div className="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
-          <div className="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <div className="inline-block w-6 h-6 border-2 border-marca-600 border-t-transparent rounded-full animate-spin" />
           <p className="mt-2 text-sm">Cargando pedidos...</p>
         </div>
       )}
@@ -202,13 +190,7 @@ const MisPedidos = () => {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-lg font-bold text-slate-800">#{p.id}</span>
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${
-                          ESTADO_PILL[p.estado]
-                        }`}
-                      >
-                        {p.estado}
-                      </span>
+                      <BadgeEstado definicion={ESTADO_PEDIDO[p.estado]} />
                     </div>
                     <p className="text-sm text-slate-500 mt-1">{formatFecha(p.created_at)}</p>
                   </div>
@@ -219,7 +201,7 @@ const MisPedidos = () => {
                     <button
                       type="button"
                       onClick={() => void toggleExpand(p.id)}
-                      className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:text-indigo-700 font-semibold"
+                      className="inline-flex items-center gap-1 text-sm text-marca-600 hover:text-marca-700 font-semibold min-h-[44px]"
                       aria-expanded={isOpen}
                       aria-controls={`detalle-${p.id}`}
                     >
@@ -245,7 +227,7 @@ const MisPedidos = () => {
                   >
                     {cargandoDetalle && (
                       <div className="text-center text-slate-500 text-sm py-3">
-                        <span className="inline-block w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mr-2" />
+                        <span className="inline-block w-5 h-5 border-2 border-marca-600 border-t-transparent rounded-full animate-spin mr-2" />
                         Cargando detalle...
                       </div>
                     )}

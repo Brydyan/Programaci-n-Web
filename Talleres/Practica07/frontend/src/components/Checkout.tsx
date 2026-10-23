@@ -95,7 +95,7 @@ const Checkout = () => {
             value={form.nombre}
             onChange={handleChange}
             maxLength={120}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-marca-500"
           />
         </div>
         <div>
@@ -111,7 +111,7 @@ const Checkout = () => {
             onChange={handleChange}
             required
             {...VALIDACION.direccion}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-marca-500"
           />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -126,7 +126,7 @@ const Checkout = () => {
               onChange={handleChange}
               required
               {...VALIDACION.ciudad}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-marca-500"
             />
           </div>
           <div>
@@ -140,7 +140,7 @@ const Checkout = () => {
               onChange={handleChange}
               required
               {...VALIDACION.telefono}
-              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-marca-500"
             />
           </div>
         </div>
@@ -153,7 +153,7 @@ const Checkout = () => {
             value={form.metodo_pago}
             onChange={handleChange}
             required
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-marca-500"
           >
             <option value="tarjeta">Tarjeta de crédito/débito</option>
             <option value="efectivo">Efectivo</option>
@@ -169,7 +169,7 @@ const Checkout = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition disabled:opacity-50"
+            className="w-full bg-marca-600 text-white py-3 rounded-lg font-semibold hover:bg-marca-700 transition disabled:opacity-50 min-h-[44px]"
           >
             {loading ? 'Procesando...' : 'Confirmar Pedido'}
           </button>

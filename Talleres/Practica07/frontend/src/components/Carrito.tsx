@@ -29,13 +29,13 @@ object-cover rounded-md" />
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-6">
-                                    <p className="font-bold text-indigo-600">${(item.precio *
+                                    <p className="font-bold text-marca-600">${(item.precio *
                                         item.cantidad).toFixed(2)}</p>
                                     <button
                                         onClick={() => removeFromCart(item.id)}
-                                        className="text-red-500 hover:text-red-700 transition"
+                                        className="text-red-500 hover:text-red-700 transition min-h-[44px]"
                                         title="Eliminar producto"
-                                    >
+>
                                         🗑️
                                     </button>
                                 </div>
@@ -54,10 +54,10 @@ mb-4">
                         </div>
                         <div className="flex justify-between items-center mb-6">
                             <span className="text-slate-800 font-bold">Total a Pagar</span>
-                            <span className="text-2xl font-bold text-indigo-600">${totalPrice.toFixed(2)}</span>
+                            <span className="text-2xl font-bold text-marca-600">${totalPrice.toFixed(2)}</span>
                         </div>
-                        <button onClick={() => navigate('/checkout')} className="w-full bg-indigo-600 text-white py-3 rounded-lg
-font-semibold hover:bg-indigo-700 transition">
+                        <button onClick={() => navigate('/checkout')} className="w-full bg-marca-600 text-white py-3 rounded-lg
+font-semibold hover:bg-marca-700 transition min-h-[44px]">
                             Proceder al Pago
                         </button>
                     </div>

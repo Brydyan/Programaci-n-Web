@@ -41,13 +41,13 @@ const Confirmacion = () => {
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Link
             to="/catalogo"
-            className="inline-block bg-indigo-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-indigo-700 transition"
+            className="inline-block bg-marca-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-marca-700 transition"
           >
             Seguir comprando
           </Link>
           <Link
             to="/mis-pedidos"
-            className="inline-block bg-white text-indigo-700 border border-indigo-300 px-6 py-3 rounded-lg font-semibold hover:bg-indigo-50 transition"
+            className="inline-block bg-white text-marca-700 border border-marca-300 px-6 py-3 rounded-lg font-semibold hover:bg-marca-50 transition"
           >
             Ver mis pedidos
           </Link>
