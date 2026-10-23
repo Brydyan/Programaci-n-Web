@@ -35,4 +35,4 @@ COPY --from=builder /app/dist ./dist
 EXPOSE 5173
 
 # Servir archivos estáticos (SPA con fallback a index.html)
-CMD ["http-server", "dist", "-p", "5173", "-g"]
+CMD ["http-server", "dist", "-p", "5173", "-g", "-f"]
