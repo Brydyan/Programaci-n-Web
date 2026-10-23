@@ -1,0 +1,170 @@
+\documentclass[11pt]{article}
+\usepackage[utf-8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{booktabs}
+
+\title{Acceso a Plataforma Staging --- MultiCatálogo}
+\author{Andy Alejandro}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{URL Pública}
+
+\begin{center}
+\Large\textbf{\textcolor{blue}{\url{https://staging-andy.tailc8cd10.ts.net/}}}
+\end{center}
+
+\textbf{Requisito:} Tailscale instalado y conectado al tailnet de la UPSE.
+
+\section{Credenciales de Usuarios}
+
+\subsection{Administrador}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Campo} & \textbf{Valor} \\
+\hline
+Email & \texttt{admin@upse.edu.ec} \\
+\hline
+Contraseña & \texttt{12345678} \\
+\hline
+Rol & Admin \\
+\hline
+Nombre & Administrador \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Permisos:}
+\begin{itemize}
+\item Panel de administración
+\item Gestión de productos
+\item Reportes y auditoría
+\item Auditoría de comisiones
+\end{itemize}
+
+\subsection{Cliente Demo}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Campo} & \textbf{Valor} \\
+\hline
+Email & \texttt{cliente@upse.edu.ec} \\
+\hline
+Contraseña & \texttt{12345678} \\
+\hline
+Rol & Cliente \\
+\hline
+Nombre & Cliente Demo \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Permisos:}
+\begin{itemize}
+\item Visualizar catálogo de productos
+\item Realizar compras
+\item Gestionar red de referidos
+\item Consultar comisiones
+\end{itemize}
+
+\section{Instrucciones de Acceso}
+
+\begin{enumerate}
+\item Instala Tailscale en tu dispositivo (disponible para Mac, Windows, Linux, iOS, Android)
+\item Conecta al tailnet de la UPSE
+\item Accede a: \url{https://staging-andy.tailc8cd10.ts.net/}
+\item Inicia sesión con cualquiera de las credenciales anteriores
+\end{enumerate}
+
+\section{Arquitectura del Sistema}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Componente} & \textbf{URL} & \textbf{Puerto} \\
+\hline
+Frontend & \url{https://staging-andy.tailc8cd10.ts.net/} & 5173 \\
+\hline
+Backend API & \url{https://staging-andy.tailc8cd10.ts.net/:3000} & 3000 \\
+\hline
+Health Check & \url{https://staging-andy.tailc8cd10.ts.net/:3000/api/health} & --- \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Notas de Desarrollo}
+
+\begin{itemize}
+\item \textbf{Base de datos:} PostgreSQL 16 (puerto 5433 local)
+\item \textbf{Caché:} Redis (puerto 6379 local)
+\item \textbf{Contraseña seed:} Válida solo para desarrollo
+\item \textbf{Archivo seed:} \texttt{Talleres/Practica07/database/migrations/003\_seed.sql}
+\item \textbf{Despliegue:} Automático en push a rama \texttt{develop}
+\end{itemize}
+
+\section{Servidor de Despliegue}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Característica} & \textbf{Valor} \\
+\hline
+Hostname & staging-andy \\
+\hline
+IP Interna & 10.10.10.26 \\
+\hline
+Ubicación & Proxmox VM 109 \\
+\hline
+Sistema Operativo & Debian \\
+\hline
+Motor de Contenedores & Docker Compose \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Troubleshooting}
+
+\subsection{No puedo acceder desde mi dispositivo}
+
+\begin{enumerate}
+\item Verifica que Tailscale esté \textbf{activo} en tu dispositivo
+\item Verifica que estés en el \textbf{mismo tailnet} que la VM
+\item Intenta: \texttt{ping staging-andy.tailc8cd10.ts.net} desde terminal
+\end{enumerate}
+
+\subsection{El backend responde 404}
+
+\begin{enumerate}
+\item Verifica contenedores: \texttt{docker compose ps}
+\item Revisa logs: \texttt{docker compose logs backend | tail -20}
+\end{enumerate}
+
+\subsection{El frontend no carga las rutas (SPA)}
+
+\begin{enumerate}
+\item Verifica serve: \texttt{docker compose logs frontend}
+\item Reconstruye: \texttt{docker compose down -v \&\& docker compose --profile staging up -d --build}
+\end{enumerate}
+
+\vspace{2cm}
+
+\begin{center}
+\textbf{Última actualización:} 23 de octubre de 2026 \\
+\textbf{Ambiente:} Staging (Tailscale Funnel) \\
+\textbf{Responsable:} Andy Alejandro
+\end{center}
+
+\end{document}
