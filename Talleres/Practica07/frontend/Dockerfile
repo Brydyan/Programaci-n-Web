@@ -13,6 +13,10 @@ RUN npm install -g pnpm && pnpm install --frozen-lockfile
 # Copiar código fuente
 COPY . .
 
+# Build arg para la URL del backend (default: localhost)
+ARG VITE_API_URL=http://localhost:3000
+ENV VITE_API_URL=$VITE_API_URL
+
 # Buildear
 RUN pnpm run build
 
