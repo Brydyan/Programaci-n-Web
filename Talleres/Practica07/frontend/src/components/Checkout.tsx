@@ -1,18 +1,38 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCart } from '../context/CartContext';
-import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/cart';
 import { checkoutAPI } from '../services/api';
+
+// Campos de envío que el backend exige (openapi.yaml → CheckoutRequest:
+// required [direccion, ciudad, telefono, metodo_pago, items]).
+//
+// Los `minLength` del contrato están replicados aquí con `minLength` para que
+// el navegador bloquee el envío antes de gastar un round-trip. NO son la
+// validación: el servidor vuelve a validar con go-playground, porque un
+// `minLength` en el cliente es una cortesía, no una garantía.
+interface EnvioForm {
+  nombre: string;
+  direccion: string;
+  ciudad: string;
+  telefono: string;
+  metodo_pago: string;
+}
+
+const VALIDACION = {
+  direccion: { minLength: 5, maxLength: 300 },
+  ciudad: { minLength: 2, maxLength: 120 },
+  telefono: { minLength: 6, maxLength: 30 },
+} as const;
 
 const Checkout = () => {
   const { cart, totalPrice } = useCart();
-  const { userEmail } = useAuth();
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<EnvioForm>({
     nombre: '',
-    email: userEmail ?? '',
     direccion: '',
+    ciudad: '',
+    telefono: '',
     metodo_pago: 'tarjeta',
   });
   const [loading, setLoading] = useState(false);
@@ -64,44 +84,75 @@ const Checkout = () => {
 
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Nombre completo</label>
+          <label
+            htmlFor="nombre" className="block text-sm font-medium text-slate-700 mb-1">
+            Nombre completo <span className="text-slate-400 font-normal">(opcional)</span>
+          </label>
           <input
             type="text"
+            id="nombre"
             name="nombre"
             value={form.nombre}
             onChange={handleChange}
-            required
+            maxLength={120}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Correo electrónico</label>
-          <input
-            type="email"
-            name="email"
-            value={form.email}
-            onChange={handleChange}
-            required
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Dirección de entrega</label>
+          <label
+            htmlFor="direccion" className="block text-sm font-medium text-slate-700 mb-1">
+            Dirección de entrega
+          </label>
           <input
             type="text"
+            id="direccion"
             name="direccion"
             value={form.direccion}
             onChange={handleChange}
             required
+            {...VALIDACION.direccion}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label
+            htmlFor="ciudad" className="block text-sm font-medium text-slate-700 mb-1">Ciudad</label>
+            <input
+              type="text"
+              id="ciudad"
+            name="ciudad"
+              value={form.ciudad}
+              onChange={handleChange}
+              required
+              {...VALIDACION.ciudad}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label
+            htmlFor="telefono" className="block text-sm font-medium text-slate-700 mb-1">Teléfono</label>
+            <input
+              type="tel"
+              id="telefono"
+            name="telefono"
+              value={form.telefono}
+              onChange={handleChange}
+              required
+              {...VALIDACION.telefono}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Método de pago</label>
+          <label
+            htmlFor="metodo_pago" className="block text-sm font-medium text-slate-700 mb-1">Método de pago</label>
           <select
+            id="metodo_pago"
             name="metodo_pago"
             value={form.metodo_pago}
             onChange={handleChange}
+            required
             className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             <option value="tarjeta">Tarjeta de crédito/débito</option>
