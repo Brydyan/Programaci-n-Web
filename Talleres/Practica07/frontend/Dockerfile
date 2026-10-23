@@ -21,12 +21,19 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm run build
 
 # Stage 2: Serve
-FROM node:20-alpine
+FROM nginx:alpine
 
 WORKDIR /app
 
-# Instalar http-server para servir archivos estáticos
-RUN npm install -g http-server
+# Copiar configuración de Nginx para SPA
+RUN echo 'server { \
+  listen 5173; \
+  root /app/dist; \
+  index index.html; \
+  location / { \
+    try_files $uri $uri/ /index.html; \
+  } \
+}' > /etc/nginx/conf.d/default.conf
 
 # Copiar dist del stage anterior
 COPY --from=builder /app/dist ./dist
@@ -34,5 +41,5 @@ COPY --from=builder /app/dist ./dist
 # Exponer puerto
 EXPOSE 5173
 
-# Servir archivos estáticos (SPA con fallback a index.html)
-CMD ["http-server", "dist", "-p", "5173", "-g", "-f"]
+# Iniciar Nginx
+CMD ["nginx", "-g", "daemon off;"]
