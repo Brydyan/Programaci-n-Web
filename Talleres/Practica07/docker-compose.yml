@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: multicatalogo
+    ports:
+      - "5433:5432"
+    volumes:
+      # Las migraciones se aplican en orden alfabético por el entrypoint de
+      # Postgres, sólo en el PRIMER arranque del volumen. Para reaplicar sobre
+      # un volumen existente usa `make db-migrate` / `make db-reset`.
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d multicatalogo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      REDIS_URL: redis:6379
+      DATABASE_URL: postgres://admin:secret@postgres:5432/multicatalogo?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET requerido (≥32 bytes). Define en .env o exporta antes de docker compose up}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174,http://localhost:5175}
+      PORT: "3000"
+      APP_ENV: ${APP_ENV:-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: on-failure
+
+volumes:
+  pgdata:
+    name: multicatalogo_pgdata

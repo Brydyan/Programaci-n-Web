@@ -1,0 +1,710 @@
+openapi: 3.0.3
+info:
+  title: MultiCatálogo API
+  version: 0.1.0
+  description: |
+    Contrato compartido BE↔FE. Fuente única de verdad para tipos y endpoints.
+    Stack: Go/Fiber (núcleo transaccional) + React (SPA).
+    Versionado: prefijo /api/v1/ (U2 actual usa /api/ legacy — mover en F7).
+servers:
+  - url: http://localhost:3000
+    description: dev local
+  - url: https://api.multicatalogo.upse.edu.ec
+    description: prod (U4)
+
+tags:
+  - name: auth
+  - name: catalog
+  - name: orders
+  - name: network
+  - name: commissions
+  - name: settlements
+  - name: reports
+  - name: admin
+  - name: health
+
+# ─────────────────────────────────────────────────────────────
+# COMPONENTES REUTILIZABLES
+# ─────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    # ---------- Errores ----------
+    APIError:
+      type: object
+      required: [status, code, message]
+      properties:
+        status: { type: integer }
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - RATE_LIMITED
+            - INVALID_TRANSITION
+            - STOCK_INSUFICIENTE
+            - INTERNAL
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+          description: Solo presente cuando APP_ENV=dev
+
+    Pagina:
+      type: object
+      required: [data, page, limit, total]
+      properties:
+        data:
+          type: array
+          items: {}
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+
+    # ---------- Auth ----------
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 255 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+
+    LoginResponse:
+      type: object
+      required: [token, email, rol]
+      properties:
+        token: { type: string }
+        email: { type: string, format: email }
+        rol:
+          type: string
+          enum: [cliente, admin]
+
+    RegisterRequest:
+      type: object
+      required: [nombre, email, password]
+      properties:
+        nombre: { type: string, minLength: 2, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 255 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        ref:
+          type: string
+          description: Código de referido opcional (6 chars alfanum)
+          maxLength: 16
+
+    RegisterResponse:
+      type: object
+      required: [id, email, codigo_ref]
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        codigo_ref: { type: string }
+
+    # ---------- Productos ----------
+    Producto:
+      type: object
+      required: [id, nombre, precio, categoria, stock, activo, img]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        precio: { type: number, format: float, minimum: 0 }
+        categoria: { type: string }
+        stock: { type: integer, minimum: 0 }
+        activo: { type: boolean }
+        img: { type: string, format: uri }
+
+    ProductoCreate:
+      type: object
+      required: [nombre, precio, categoria, stock]
+      properties:
+        nombre: { type: string, minLength: 2, maxLength: 200 }
+        precio: { type: number, format: float, minimum: 0.01 }
+        categoria: { type: string, minLength: 2, maxLength: 80 }
+        stock: { type: integer, minimum: 0 }
+        img: { type: string, format: uri }
+
+    ProductoUpdate:
+      type: object
+      properties:
+        nombre: { type: string, minLength: 2, maxLength: 200 }
+        precio: { type: number, format: float, minimum: 0.01 }
+        categoria: { type: string }
+        stock: { type: integer, minimum: 0 }
+        img: { type: string, format: uri }
+        activo: { type: boolean }
+
+    # ---------- Pedidos ----------
+    ItemCarrito:
+      type: object
+      required: [id, nombre, precio, cantidad]
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        precio: { type: number, format: float }
+        cantidad: { type: integer, minimum: 1 }
+
+    CheckoutRequest:
+      type: object
+      required: [direccion, ciudad, telefono, metodo_pago, items]
+      properties:
+        nombre: { type: string, description: 'override opcional del nombre del token' }
+        direccion: { type: string, minLength: 5, maxLength: 300 }
+        ciudad: { type: string, minLength: 2, maxLength: 120 }
+        telefono: { type: string, minLength: 6, maxLength: 30 }
+        metodo_pago: { type: string, minLength: 2, maxLength: 60 }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ItemCarrito' }
+
+    Pedido:
+      type: object
+      required: [id, total, estado, created_at]
+      properties:
+        id: { type: integer }
+        total: { type: number, format: float }
+        estado:
+          type: string
+          enum: [pendiente, preparando, enviado, entregado, cancelado]
+        created_at: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              producto_id: { type: integer }
+              nombre: { type: string }
+              precio: { type: number, format: float }
+              cantidad: { type: integer }
+
+    PedidoResumen:
+      type: object
+      properties:
+        id: { type: integer }
+        total: { type: number, format: float }
+        estado: { type: string }
+        created_at: { type: string, format: date-time }
+
+    # ---------- Red / Comisiones ----------
+    NodoRed:
+      type: object
+      required: [id, codigo, nombre, nivel, ventas]
+      properties:
+        id: { type: integer }
+        codigo:
+          type: string
+          description: Código de invitación. El del nodo raíz es el link /registro?ref=CODIGO.
+        nombre:
+          type: string
+          description: Nombre del usuario vinculado; cae al código si el nodo no tiene cuenta.
+        nivel: { type: integer, description: 'Profundidad desde la raíz: 0 es el propio usuario en /red/mia.' }
+        ventas: { type: number, format: float }
+        hijos:
+          type: array
+          items: { $ref: '#/components/schemas/NodoRed' }
+
+    Comision:
+      type: object
+      properties:
+        id: { type: integer }
+        pedido_id: { type: integer }
+        referido_id: { type: integer }
+        nivel: { type: integer }
+        porcentaje: { type: number, format: float }
+        monto: { type: number, format: float }
+        estado: { type: string, enum: [pendiente, aprobada, pagada, revertida] }
+        creado_en: { type: string, format: date-time }
+    ComisionTotal:
+      type: object
+      properties:
+        estado: { type: string, enum: [pendiente, aprobada, pagada, revertida] }
+        total: { type: number, format: float }
+        cantidad: { type: integer }
+    ComisionResumen:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Comision' } }
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totales: { type: array, items: { $ref: '#/components/schemas/ComisionTotal' } }
+        estado:
+          type: string
+          enum: [pendiente, aprobada, pagada, revertida]
+        creado_en: { type: string, format: date-time }
+
+    # ---------- Liquidaciones ----------
+    Liquidacion:
+      type: object
+      properties:
+        id: { type: integer }
+        referido_id: { type: integer }
+        total: { type: number, format: float }
+        periodo: { type: string }
+        estado:
+          type: string
+          enum: [pendiente, pagada]
+        creado_en: { type: string, format: date-time }
+        pagada_en: { type: string, format: date-time, nullable: true }
+
+    # ---------- Reportes ----------
+    ReporteResumen:
+      type: object
+      properties:
+        total_vendido: { type: number, format: float }
+        num_pedidos: { type: integer }
+        ticket_promedio: { type: number, format: float }
+        comisiones_devengadas: { type: number, format: float }
+
+    TopProducto:
+      type: object
+      properties:
+        producto_id: { type: integer }
+        nombre: { type: string }
+        unidades: { type: integer }
+        ingresos: { type: number, format: float }
+
+    TopReferido:
+      type: object
+      properties:
+        referido_id: { type: integer }
+        codigo: { type: string }
+        nombre: { type: string, description: 'nombre del usuario; cae al código si el referido no tiene usuario' }
+        ventas: { type: number, format: float }
+        comisiones: { type: number, format: float }
+
+    DeudaDistribuidor:
+      type: object
+      properties:
+        referido_id: { type: integer }
+        codigo: { type: string }
+        nombre: { type: string }
+        total: { type: number, format: float, description: 'suma de las comisiones pendientes' }
+        comisiones: { type: integer, description: 'cuántas comisiones componen la deuda' }
+        ultima_pago: { type: string, format: date-time }
+
+    # ---------- Health ----------
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        pg: { type: string, enum: [up, down] }
+        redis: { type: string, enum: [up, down] }
+        version: { type: string }
+
+# ─────────────────────────────────────────────────────────────
+# SEGURIDAD GLOBAL (endpoints públicos la desactivan con security: [])
+# ─────────────────────────────────────────────────────────────
+security:
+  - bearerAuth: []
+
+paths:
+  /api/health:
+    get:
+      tags: [health]
+      security: []
+      summary: Estado del servicio
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Health' } } } }
+        '503': { description: degraded }
+
+  /api/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Login (bcrypt + JWT)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/LoginResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: cuenta desactivada }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/register:
+    post:
+      tags: [auth]
+      security: []
+      summary: Registro público con código referido opcional
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } }
+      responses:
+        '201': { description: creado, content: { application/json: { schema: { $ref: '#/components/schemas/RegisterResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { description: email duplicado }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/productos:
+    get:
+      tags: [catalog]
+      security: []
+      summary: Catálogo público (cacheado, filtra activo=true)
+      parameters:
+        - { in: query, name: q, schema: { type: string }, description: búsqueda server-side }
+        - { in: query, name: categoria, schema: { type: string } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Pagina' } } } }
+
+  /api/productos/{id}:
+    get:
+      tags: [catalog]
+      security: []
+      summary: Detalle de producto
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Producto' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/producto/{id}:
+    get:
+      tags: [catalog]
+      security: []
+      summary: Detalle de producto (alias singular)
+      description: >
+        Alias en singular de `/api/productos/{id}`. Mismo handler y misma
+        respuesta. Existe por compatibilidad con clientes antiguos; no es un
+        typo. Nuevo código debe usar la ruta plural.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Producto' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/admin/productos:
+    get:
+      tags: [admin]
+      summary: Listado admin (incluye inactivos) + búsqueda
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: activo, schema: { type: boolean } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Pagina' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+    post:
+      tags: [admin]
+      summary: Crear producto (admin)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProductoCreate' } } }
+      responses:
+        '201': { description: creado, content: { application/json: { schema: { $ref: '#/components/schemas/Producto' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/productos/{id}:
+    put:
+      tags: [admin]
+      summary: Editar producto (admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProductoUpdate' } } }
+      responses:
+        '200': { description: ok }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [admin]
+      summary: Soft delete de producto (admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '204': { description: borrado lógico }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/checkout:
+    post:
+      tags: [orders]
+      summary: Compra (transacción ACID, identidad del token)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CheckoutRequest' } } }
+      responses:
+        '201': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Pedido' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: stock insuficiente }
+
+  /api/pedidos/mios:
+    get:
+      tags: [orders]
+      summary: Pedidos del usuario del token
+      parameters:
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Pagina' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/pedidos/{id}:
+    get:
+      tags: [orders]
+      summary: Detalle de pedido (dueño o admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Pedido' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/admin/pedidos:
+    get:
+      tags: [admin]
+      summary: Listado admin de pedidos
+      parameters:
+        - { in: query, name: estado, schema: { type: string, enum: [pendiente, preparando, enviado, entregado, cancelado] } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Pagina' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/pedidos/{id}/estado:
+    patch:
+      tags: [admin]
+      summary: Cambiar estado (FSM validada)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado]
+              properties:
+                estado:
+                  type: string
+                  enum: [pendiente, preparando, enviado, entregado, cancelado]
+      responses:
+        '200': { description: ok }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: transición inválida }
+
+  /api/red:
+    get:
+      tags: [network]
+      summary: Red global (solo admin, cacheada). Un distribuidor usa /api/red/mia.
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/NodoRed' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/red/mia:
+    get:
+      tags: [network]
+      summary: Subárbol del usuario del token (claim `sub`)
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/NodoRed' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/comisiones/mias:
+    get:
+      tags: [commissions]
+      summary: Ledger del usuario del token
+      description: >-
+        La identidad sale del claim `sub`; no acepta un referido_id por query
+        para que nadie pueda leer el ledger de otro distribuidor.
+      parameters:
+        - { in: query, name: estado, schema: { type: string, enum: [pendiente, aprobada, pagada, revertida] } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComisionResumen' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/admin/comisiones:
+    get:
+      tags: [commissions]
+      summary: Auditoría del ledger (admin)
+      parameters:
+        - { in: query, name: estado, schema: { type: string, enum: [pendiente, aprobada, pagada, revertida] } }
+        - { in: query, name: referido_id, schema: { type: integer } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComisionResumen' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/liquidaciones/deuda:
+    get:
+      tags: [settlements]
+      summary: Deuda por distribuidor (admin)
+      description: >
+        Sólo incluye distribuidores con comisiones en estado `pendiente`: es la
+        lista de trabajo antes de pulsar liquidar. Responde 409 si se intenta
+        liquidar a alguien sin deuda.
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeudaDistribuidor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/admin/liquidaciones:
+    get:
+      tags: [settlements]
+      summary: Historial de liquidaciones (admin)
+      parameters:
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200': { description: ok }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [settlements]
+      summary: Liquidar comisiones pendientes de un referido (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [referido_id]
+              properties:
+                referido_id: { type: integer }
+                periodo: { type: string, description: 'YYYY-MM opcional' }
+      responses:
+        '201': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Liquidacion' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: nada pendiente }
+
+  /api/liquidaciones/mias:
+    get:
+      tags: [settlements]
+      summary: Cobros del distribuidor
+      responses:
+        '200': { description: ok }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/reportes/resumen:
+    get:
+      tags: [reports]
+      summary: KPIs del periodo (admin)
+      description: >
+        Excluye los pedidos `cancelado`: al cancelar se devuelve el stock y se
+        revierten las comisiones, así que contarlos como venta infla la
+        facturación. `hasta` es INCLUSIVO para el usuario (un `hasta=2026-12-31`
+        incluye todo ese día) y se aplica como cota superior exclusiva del día
+        siguiente. Ambos parámetros son opcionales; sin ellos, el resumen es
+        histórico completo.
+      parameters:
+        - { in: query, name: desde, schema: { type: string, format: date }, description: ' inclusivo' }
+        - { in: query, name: hasta, schema: { type: string, format: date }, description: ' inclusivo' }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/ReporteResumen' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reportes/top-productos:
+    get:
+      tags: [reports]
+      summary: Ranking de productos por ingresos (admin)
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 10, minimum: 1, maximum: 50 } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TopProducto' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reportes/top-referidos:
+    get:
+      tags: [reports]
+      summary: Ranking de distribuidores por ventas (admin)
+      description: >
+        `ventas` viene del contador acumulado `referidos.ventas`, que se
+        actualiza best-effort tras el commit del checkout y por tanto puede ir
+        un instante por detrás de `comisiones`, que se lee del ledger. Para
+        auditoría usar `/api/admin/comisiones`, no este ranking.
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 10, minimum: 1, maximum: 50 } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TopReferido' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reportes/comisiones-pendientes:
+    get:
+      tags: [reports]
+      summary: Ledger pendiente de liquidar (admin)
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 10, minimum: 1, maximum: 50 } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Comision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+# ─────────────────────────────────────────────────────────────
+# RESPUESTAS REUTILIZABLES
+# ─────────────────────────────────────────────────────────────
+responses:
+  ValidationError:
+    description: Error de validación
+    content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+  Unauthorized:
+    description: Sin token o token inválido
+    content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+  Forbidden:
+    description: Sin permisos
+    content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+  NotFound:
+    description: Recurso no encontrado
+    content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }
+  RateLimited:
+    description: Demasiadas peticiones
+    content: { application/json: { schema: { $ref: '#/components/schemas/APIError' } } }

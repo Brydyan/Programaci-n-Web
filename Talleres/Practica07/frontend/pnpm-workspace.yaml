@@ -1,0 +1,9 @@
+# Un solo paquete, pero pnpm exige este archivo para leer `overrides`.
+# pnpm 11 movió aquí las claves que antes vivían bajo el campo `pnpm` de
+# package.json (que ahora se ignora en silencio, con un warning).
+overrides:
+  # GHSA: source-map-js permite denegación de servicio por agotamiento del event
+  # loop al parsear offsets de secciones de source maps. arrives transitiva por
+  # @tailwindcss/node y por css-tree -> jsdom; ninguno expone una versión parcheada
+  # todavía, así que se fuerza el parche a mano.
+  source-map-js: 1.2.2
