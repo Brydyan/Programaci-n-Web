@@ -4,7 +4,7 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN npm install -g pnpm && pnpm install
 COPY frontend/ .
-ARG VITE_API_URL=https://multicatalogo-09b4f718c802.herokuapp.com
+ARG VITE_API_URL=https://brydyan.me
 RUN VITE_API_URL=$VITE_API_URL pnpm build
 
 # Stage 2: Build backend
