@@ -3,7 +3,7 @@ FROM node:20-alpine AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN npm install -g pnpm && pnpm install
-COPY frontend . .
+COPY frontend/ .
 ARG VITE_API_URL=https://multicatalogo-09b4f718c802.herokuapp.com
 RUN VITE_API_URL=$VITE_API_URL pnpm build
 
@@ -12,7 +12,7 @@ FROM golang:1.26-alpine AS backend-build
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
-COPY backend . .
+COPY backend/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
 # Stage 3: Runtime
