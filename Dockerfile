@@ -13,6 +13,7 @@ WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ .
+COPY database/migrations ./database/migrations
 RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
 # Stage 3: Runtime
@@ -20,6 +21,7 @@ FROM alpine:latest
 WORKDIR /app
 RUN apk add --no-cache ca-certificates
 COPY --from=backend-build /app/main .
+COPY --from=backend-build /app/database/migrations ./database/migrations
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 EXPOSE 8080
 CMD ["./main"]
