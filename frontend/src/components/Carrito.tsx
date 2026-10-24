@@ -20,7 +20,7 @@ shadow-sm text-center">
                         {cart.map((item) => (
                             <div key={item.id} className="flex items-center justify-between bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                                 <div className="flex items-center gap-4">
-                                    <img src={item.img} alt={item.nombre} className="w-16 h-16
+                                    <img src={item.img} alt={item.nombre} referrerPolicy="origin" className="w-16 h-16
 object-cover rounded-md" />
                                     <div>
                                         <h3 className="font-semibold text-slate-800">{item.nombre}</h3>

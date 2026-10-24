@@ -55,6 +55,7 @@ const Catalogo = () => {
                             <img
                                 src={prod.img}
                                 alt={prod.nombre}
+                                referrerPolicy="origin"
                                 className="w-full h-40 object-cover hover:scale-105 transition duration-300"
                             />
                         </Link>

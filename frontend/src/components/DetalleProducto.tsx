@@ -93,6 +93,7 @@ const DetalleProducto = () => {
           <img
             src={producto.img}
             alt={producto.nombre}
+            referrerPolicy="origin"
             className="w-full h-full object-cover"
           />
         </div>
