@@ -120,7 +120,8 @@ export default defineConfig({
 
   build: {
     rollupOptions: {
-      external: ['workbox-window'],
+      // workbox-window se importa desde virtual:pwa-register/react
+      // que ya lo maneja internamente. NO debe ser external.
     },
   },
 

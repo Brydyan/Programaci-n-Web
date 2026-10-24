@@ -58,10 +58,10 @@ UPDATE usuarios u
 -- ── Catálogo mínimo ──────────────────────────────────────────────────────────
 INSERT INTO productos (nombre, precio, categoria, stock, img)
     SELECT * FROM (VALUES
-        ('Serum Revitalizante', 45.00::numeric, 'rostro',       50, 'https://picsum.photos/seed/serum/150'),
-        ('Crema Hidratante Pro', 32.50::numeric, 'rostro',       40, 'https://picsum.photos/seed/crema/150'),
-        ('Tónico Purificante',  28.00::numeric, 'rostro',       35, 'https://picsum.photos/seed/tonico/150'),
-        ('Mascarilla Nocturna', 50.00::numeric, 'tratamiento',  25, 'https://picsum.photos/seed/mascarilla/150')
+        ('Serum Revitalizante', 45.00::numeric, 'rostro',       50, '/productos/serum.jpg'),
+        ('Crema Hidratante Pro', 32.50::numeric, 'rostro',       40, '/productos/crema.jpg'),
+        ('Tónico Purificante',  28.00::numeric, 'rostro',       35, '/productos/tonico.jpg'),
+        ('Mascarilla Nocturna', 50.00::numeric, 'tratamiento',  25, '/productos/mascarilla.jpg')
     ) AS v(nombre, precio, categoria, stock, img)
     WHERE NOT EXISTS (
         SELECT 1 FROM productos p WHERE p.nombre = v.nombre

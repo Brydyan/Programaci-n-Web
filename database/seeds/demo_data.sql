@@ -122,18 +122,18 @@ UPDATE usuarios u SET referido_id = 32 WHERE u.email = 'andrea@demo.ec';
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO productos (nombre, precio, categoria, stock, img)
 SELECT * FROM (VALUES
-    ('Demo Serum Hydratante',      68.90,  'rostro',      400, 'https://picsum.photos/seed/serum2/150'),
-    ('Demo Cleanser Gel',           24.50,  'rostro',      400, 'https://picsum.photos/seed/cleanser/150'),
-    ('Demo Protector Solar SPF50',  42.00,  'rostro',      400, 'https://picsum.photos/seed/spf/150'),
-    ('Demo Tonico Facial',         36.75,  'rostro',      400, 'https://picsum.photos/seed/tonico2/150'),
-    ('Demo Exfoliante AHA',        55.30,  'tratamiento', 400, 'https://picsum.photos/seed/exfoliante/150'),
-    ('Demo Gel Contorno Ojos',      29.99,  'tratamiento', 400, 'https://picsum.photos/seed/gel/150'),
-    ('Demo Mascarilla de Arcilla',  31.40,  'tratamiento', 400, 'https://picsum.photos/seed/arcilla/150'),
-    ('Demo Aceite Facial Nocturno', 47.80,  'tratamiento', 400, 'https://picsum.photos/seed/aceite/150'),
-    ('Demo Shampoo Anticaspa',      26.90,  'cabello',     400, 'https://picsum.photos/seed/shampoo2/150'),
-    ('Demo Acondicionador Keratina',33.60,  'cabello',     400, 'https://picsum.photos/seed/acond/150'),
-    ('Demo Serum Capilar',          39.20,  'cabello',     400, 'https://picsum.photos/seed/serumcap/150'),
-    ('Demo Labial Hidratante',      18.45,  'labios',      400, 'https://picsum.photos/seed/labial/150')
+    ('Demo Serum Hydratante',      68.90,  'rostro',      400, '/productos/serum.jpg'),
+    ('Demo Cleanser Gel',           24.50,  'rostro',      400, '/productos/limpiador.jpg'),
+    ('Demo Protector Solar SPF50',  42.00,  'rostro',      400, '/productos/tonico.jpg'),
+    ('Demo Tonico Facial',         36.75,  'rostro',      400, '/productos/toner.jpg'),
+    ('Demo Exfoliante AHA',        55.30,  'tratamiento', 400, '/productos/crema.jpg'),
+    ('Demo Gel Contorno Ojos',      29.99,  'tratamiento', 400, '/productos/serum-vitamina.jpg'),
+    ('Demo Mascarilla de Arcilla',  31.40,  'tratamiento', 400, '/productos/mascarilla.jpg'),
+    ('Demo Aceite Facial Nocturno', 47.80,  'tratamiento', 400, '/productos/locion.jpg'),
+    ('Demo Shampoo Anticaspa',      26.90,  'cabello',     400, '/productos/serum.jpg'),
+    ('Demo Acondicionador Keratina',33.60,  'cabello',     400, '/productos/crema.jpg'),
+    ('Demo Serum Capilar',          39.20,  'cabello',     400, '/productos/tonico.jpg'),
+    ('Demo Labial Hidratante',      18.45,  'labios',      400, '/productos/limpiador.jpg')
 ) AS v(nombre, precio, categoria, stock, img)
 WHERE NOT EXISTS (SELECT 1 FROM productos p WHERE p.nombre = v.nombre);
 
