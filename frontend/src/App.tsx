@@ -93,4 +93,4 @@ function App() {
     </AuthProvider>
   );
 }
-export default App;// cache bust sáb 24 oct 2026 00:16:43 -05
+export default App;
