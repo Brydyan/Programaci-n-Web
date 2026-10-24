@@ -39,6 +39,13 @@ func main() {
 	// 3) Inicializar conexiones (DB + Redis).
 	config.InitDB()
 
+	// 3.5) Run migrations on startup (production only).
+	if appEnv == "production" {
+		if err := runMigrations(config.DB); err != nil {
+			log.Fatalf("[migrations] %v", err)
+		}
+	}
+
 	// 4) Inyección de dependencias en controllers.
 	repo := repository.NewRepository(config.DB)
 	cache := config.NewRedisService()
