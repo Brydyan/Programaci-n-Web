@@ -37,6 +37,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       localStorage.setItem(TOKEN_KEY, data.token);
       localStorage.setItem(EMAIL_KEY, data.email);
       localStorage.setItem(ROL_KEY, data.rol);
+      // Resetear flag de PWA install prompt al loguearse
+      localStorage.removeItem('pwa:install-dismissed');
       setIsAuthenticated(true);
       setUserEmail(data.email);
       setRol(data.rol);
